@@ -13,9 +13,9 @@ Output: Produces a video file with bounding boxes and labels (Child/Adult) along
 
 #### Installation
 
-1. Clone the repository:
+1. Clone the repository:(Either by cmd or just download as zip then paste project folder)
 
-git clone <https://github.com/Nerd-coderZero/Child_Adult_Detection>  (may not yet made git repository so just copy given zip folder to your project folder)
+git clone <https://github.com/Nerd-coderZero/Child_Adult_Detection> 
 cd <Child_Adult_Detection>
 
 2. Install dependencies:(Make sure you are into Virtual Environment of project folder to not mix dependencies)
@@ -33,11 +33,11 @@ Run the script with the sample video:
 python object_detection.py 
 
 
-Output
+#### Output
 
     The output video will display bounding boxes around detected individuals with their assigned IDs and labels (Child/Adult). The output video will be saved as output.mp4.
 
-Notes
+#### Notes
     
 The classification relies on pose estimation and height-based heuristics. In cases of seated children and adults, there are still some classification inaccuracies.
 Custom models or further tuning can improve classification accuracy.
