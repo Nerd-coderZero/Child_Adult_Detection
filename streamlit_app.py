@@ -17,7 +17,7 @@ detection_model = tf.saved_model.load(detection_model_dir)
 # Load the pre-trained child/adult classification model
 scaler = StandardScaler()
 child_adult_model = SVC(kernel='rbf', C=1, gamma='scale')
-child_adult_model.fit(x_train, y_train)
+child_adult_model.fit(X_train, y_train)
 
 def process_frame(frame, model):
     input_tensor = tf.convert_to_tensor(frame)
