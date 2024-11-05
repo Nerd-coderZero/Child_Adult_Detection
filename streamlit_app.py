@@ -2,8 +2,6 @@ import cv2
 import numpy as np
 import tensorflow as tf
 import mediapipe as mp
-from sklearn.svm import SVC
-from sklearn.preprocessing import StandardScaler
 import streamlit as st
 
 # Initialize MediaPipe Pose for pose-based classification
@@ -15,9 +13,7 @@ detection_model_dir = "ssd_mobilenet_v2_fpnlite_320x320_coco17_tpu-8/saved_model
 detection_model = tf.saved_model.load(detection_model_dir)
 
 # Load the pre-trained child/adult classification model
-scaler = StandardScaler()
-child_adult_model = SVC(kernel='rbf', C=1, gamma='scale')
-child_adult_model.fit(X_train, y_train)
+child_adult_model = tf.keras.models.load_model('child_adult_model.h5')
 
 def process_frame(frame, model):
     input_tensor = tf.convert_to_tensor(frame)
@@ -41,7 +37,7 @@ def compute_iou(box1, box2):
     union_area = box1_area + box2_area - intersect_area
     return intersect_area / union_area if union_area > 0 else 0
 
-def classify_person_with_pose(frame, box, padding=0.1):
+def classify_person_with_pose(frame, box, padding=0.1, child_threshold=0.8, adult_threshold=1.1):
     # Extract the bounding box coordinates
     y_min, x_min, y_max, x_max = box
     height, width, _ = frame.shape
@@ -73,14 +69,10 @@ def classify_person_with_pose(frame, box, padding=0.1):
         # Calculate average vertical distance from shoulders to ankles
         height_estimate = (abs(left_shoulder.y - left_ankle.y) + abs(right_shoulder.y - right_ankle.y)) / 2
         
-        # Use the SVM model to classify the person
-        person_features = [height_estimate, box[2] - box[0], box[3] - box[1]]
-        person_features = scaler.transform([person_features])
-        class_label = child_adult_model.predict(person_features)[0]
-        
-        if class_label == 0:
+        # Define thresholds for classification
+        if height_estimate < child_threshold:
             return "Child"
-        else:
+        else: 
             return "Adult"
     
     # Fallback to the existing classification model if no pose landmarks are detected
@@ -90,7 +82,7 @@ def classify_person_with_pose(frame, box, padding=0.1):
     
     prediction = child_adult_model.predict(input_tensor)
     
-    if prediction[0] < 0.5:
+    if prediction[0] < 0.6:
         return "Child"
     else:
         return "Adult"
@@ -146,59 +138,43 @@ def draw_boxes_and_ids(frame, tracks, min_age=3):
                         cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
     return frame
 
-def main(X_train, y_train):
-    # Load the pre-trained child/adult classification model
-    scaler = StandardScaler()
-    child_adult_model = SVC(kernel='rbf', C=1, gamma='scale')
-    child_adult_model.fit(X_train, y_train)
-    st.title("Person Detection and Tracking")
+def main(video_path):
+    cap = cv2.VideoCapture(video_path)
     
-    # Allow the user to upload a video file
-    uploaded_file = st.file_uploader("Choose a video file", type=["mp4"])
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    fps = int(cap.get(cv2.CAP_PROP_FPS))
     
-    if uploaded_file is not None:
-        # Save the uploaded file to disk
-        with open("input.mp4", "wb") as f:
-            f.write(uploaded_file.getvalue())
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    out = cv2.VideoWriter('output.mp4', fourcc, fps, (width, height))
+    
+    tracks = []
+    frame_id = 0
+    
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
         
-        # Process the video and display the results
-        cap = cv2.VideoCapture("input.mp4")
+        frame_id += 1
         
-        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        fps = int(cap.get(cv2.CAP_PROP_FPS))
+        if frame_id % 3 != 0:
+            continue
         
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-        out = cv2.VideoWriter('output.mp4', fourcc, fps, (width, height))
+        small_frame = cv2.resize(frame, (320, 240))
+        detections = process_frame(small_frame, detection_model)
+        tracks = update_tracks(detections, tracks)
+        frame = draw_boxes_and_ids(frame, tracks)
         
-        tracks = []
-        frame_id = 0
+        out.write(frame)
         
-        while True:
-            ret, frame = cap.read()
-            if not ret:
-                break
-            
-            frame_id += 1
-            
-            if frame_id % 3 != 0:
-                continue
-            
-            small_frame = cv2.resize(frame, (320, 240))
-            detections = process_frame(small_frame, detection_model)
-            tracks = update_tracks(detections, tracks)
-            frame = draw_boxes_and_ids(frame, tracks)
-            
-            out.write(frame)
-            
-            # Display the processed frame in the Streamlit app
-            st.image(frame, channels="BGR", use_column_width=True)
-        
-        cap.release()
-        out.release()
-        
-        # Display the output video
-        st.video("output.mp4")
+        cv2.imshow("Object Detection & Tracking", frame)
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
+    
+    cap.release()
+    out.release()
+    cv2.destroyAllWindows()
 
 if __name__ == "__main__":
-    main(X_train, y_train)
+    main("2.mp4")
