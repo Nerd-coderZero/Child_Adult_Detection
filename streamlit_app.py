@@ -3,6 +3,8 @@ import numpy as np
 import tensorflow as tf
 import mediapipe as mp
 import streamlit as st
+from tempfile import NamedTemporaryFile
+
 
 # Initialize MediaPipe Pose for pose-based classification
 mp_pose = mp.solutions.pose
