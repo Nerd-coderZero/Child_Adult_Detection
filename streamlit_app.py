@@ -2,8 +2,9 @@ import cv2
 import numpy as np
 import tensorflow as tf
 import mediapipe as mp
-import streamlit as st
 from tempfile import NamedTemporaryFile
+import streamlit as st
+st.legacy_caching.clear_cache()
 
 
 # Initialize MediaPipe Pose for pose-based classification
