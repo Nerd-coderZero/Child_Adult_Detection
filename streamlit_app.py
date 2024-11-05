@@ -146,7 +146,11 @@ def draw_boxes_and_ids(frame, tracks, min_age=3):
                         cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
     return frame
 
-def main():
+def main(X_train, y_train):
+    # Load the pre-trained child/adult classification model
+    scaler = StandardScaler()
+    child_adult_model = SVC(kernel='rbf', C=1, gamma='scale')
+    child_adult_model.fit(X_train, y_train)
     st.title("Person Detection and Tracking")
     
     # Allow the user to upload a video file
@@ -197,4 +201,4 @@ def main():
         st.video("output.mp4")
 
 if __name__ == "__main__":
-    main()
+    main(X_train, y_train)
