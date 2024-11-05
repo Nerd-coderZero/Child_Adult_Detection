@@ -2,7 +2,8 @@ import cv2
 import numpy as np
 import tensorflow as tf
 import mediapipe as mp
-
+from sklearn.svm import SVC
+from sklearn.preprocessing import StandardScaler
 
 # Initialize MediaPipe Pose for pose-based classification
 mp_pose = mp.solutions.pose
@@ -13,8 +14,9 @@ detection_model_dir = "ssd_mobilenet_v2_fpnlite_320x320_coco17_tpu-8/saved_model
 detection_model = tf.saved_model.load(detection_model_dir)
 
 # Load the pre-trained child/adult classification model
-child_adult_model = tf.keras.models.load_model('child_adult_model.h5')
-
+scaler = StandardScaler()
+child_adult_model = SVC(kernel='rbf', C=1, gamma='scale')
+child_adult_model.fit(X_train, y_train)
 
 def process_frame(frame, model):
     input_tensor = tf.convert_to_tensor(frame)
@@ -38,7 +40,7 @@ def compute_iou(box1, box2):
     union_area = box1_area + box2_area - intersect_area
     return intersect_area / union_area if union_area > 0 else 0
 
-def classify_person_with_pose(frame, box, padding=0.1, child_threshold=0.8, adult_threshold=1.2):
+def classify_person_with_pose(frame, box, padding=0.1):
     # Extract the bounding box coordinates
     y_min, x_min, y_max, x_max = box
     height, width, _ = frame.shape
@@ -69,12 +71,15 @@ def classify_person_with_pose(frame, box, padding=0.1, child_threshold=0.8, adul
         
         # Calculate average vertical distance from shoulders to ankles
         height_estimate = (abs(left_shoulder.y - left_ankle.y) + abs(right_shoulder.y - right_ankle.y)) / 2
-        print(f"Estimated height (normalized): {height_estimate}")
         
-        # Define thresholds for classification
-        if height_estimate < child_threshold:
+        # Use the SVM model to classify the person
+        person_features = [height_estimate, box[2] - box[0], box[3] - box[1]]
+        person_features = scaler.transform([person_features])
+        class_label = child_adult_model.predict(person_features)[0]
+        
+        if class_label == 0:
             return "Child"
-        else: 
+        else:
             return "Adult"
     
     # Fallback to the existing classification model if no pose landmarks are detected
@@ -83,7 +88,6 @@ def classify_person_with_pose(frame, box, padding=0.1, child_threshold=0.8, adul
     input_tensor = np.expand_dims(resized_person, axis=0)
     
     prediction = child_adult_model.predict(input_tensor)
-    print(f"Fallback Prediction: {prediction[0]}")
     
     if prediction[0] < 0.5:
         return "Child"
