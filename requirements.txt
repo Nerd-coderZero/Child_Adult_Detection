@@ -1,5 +1,5 @@
 streamlit
-opencv-contrib-python-headless
+opencv-contrib-python-headless==4.8.1.78
 tensorflow
 mediapipe
 numpy
