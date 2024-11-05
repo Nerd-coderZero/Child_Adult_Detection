@@ -1,6 +1,6 @@
-opencv-python
-numpy
+streamlit
+opencv-python-headless
 tensorflow
 mediapipe
-pytube
-streamlit
+numpy
+scikit-learn
