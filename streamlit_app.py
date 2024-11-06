@@ -3,47 +3,96 @@ import numpy as np
 import tensorflow as tf
 import mediapipe as mp
 import streamlit as st
-from tempfile import NamedTemporaryFile
+from tempfile import NamedTemporaryFile, gettempdir
 import os
 import logging
 from typing import Generator
 import gc
+import pathlib
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Suppress TensorFlow warnings
+tf.get_logger().setLevel('ERROR')
+
 class VideoProcessor:
     def __init__(self):
-        # Initialize MediaPipe with lower confidence threshold
-        self.mp_pose = mp.solutions.pose
-        self.pose = self.mp_pose.Pose(
-            static_image_mode=False,
-            min_detection_confidence=0.3,
-            model_complexity=0
-        )
+        try:
+            # Create a temporary directory with user permissions
+            self.temp_dir = pathlib.Path(gettempdir()) / "mediapipe_models"
+            self.temp_dir.mkdir(exist_ok=True, parents=True)
+            
+            # Set MediaPipe model path environment variable
+            os.environ["MEDIAPIPE_MODEL_PATH"] = str(self.temp_dir)
+            
+            # Initialize MediaPipe with lower confidence threshold
+            self.mp_pose = mp.solutions.pose
+            self.pose = self.mp_pose.Pose(
+                static_image_mode=False,
+                min_detection_confidence=0.3,
+                model_complexity=0,
+                enable_segmentation=False  # Disable unnecessary features
+            )
+        except Exception as e:
+            logger.error(f"Error initializing MediaPipe: {e}")
+            st.error("Error initializing video processor. Please try refreshing the page.")
+            raise
         
-        # Load models only when needed
+        # Initialize models as None
         self.detection_model = None
         self.child_adult_model = None
         
     def load_models(self):
-        """Lazy loading of models to save memory"""
+        """Lazy loading of models with error handling"""
         if self.detection_model is None:
             try:
-                self.detection_model = tf.saved_model.load(
-                    "ssd_mobilenet_v2_fpnlite_320x320_coco17_tpu-8/saved_model"
-                )
+                # Check if model files exist
+                model_path = "ssd_mobilenet_v2_fpnlite_320x320_coco17_tpu-8/saved_model"
+                if not os.path.exists(model_path):
+                    raise FileNotFoundError(f"Detection model not found at {model_path}")
+                
+                self.detection_model = tf.saved_model.load(model_path)
+                logger.info("Detection model loaded successfully")
             except Exception as e:
                 logger.error(f"Error loading detection model: {e}")
+                st.error("Error loading detection model. Please check if model files are present.")
                 raise
                 
         if self.child_adult_model is None:
             try:
-                self.child_adult_model = tf.keras.models.load_model('child_adult_model.h5')
+                # Check if model file exists
+                if not os.path.exists('child_adult_model.h5'):
+                    raise FileNotFoundError("Classification model not found")
+                
+                self.child_adult_model = tf.keras.models.load_model('child_adult_model.h5', compile=False)
+                self.child_adult_model.compile(
+                    optimizer='adam',
+                    loss='binary_crossentropy',
+                    metrics=['accuracy']
+                )
+                logger.info("Classification model loaded successfully")
             except Exception as e:
                 logger.error(f"Error loading classification model: {e}")
+                st.error("Error loading classification model. Please check if model file is present.")
                 raise
+
+    def cleanup(self):
+        """Clean up resources"""
+        try:
+            if hasattr(self, 'pose'):
+                self.pose.close()
+            if hasattr(self, 'temp_dir') and self.temp_dir.exists():
+                # Clean up temporary files
+                for file in self.temp_dir.glob('*'):
+                    try:
+                        file.unlink()
+                    except Exception as e:
+                        logger.warning(f"Error cleaning up file {file}: {e}")
+                self.temp_dir.rmdir()
+        except Exception as e:
+            logger.warning(f"Error during cleanup: {e}")
 
     def process_video(self, video_path: str, progress_bar, stframe,
                      max_frames: int = 300) -> None:
@@ -222,6 +271,7 @@ def main():
             st.error("File too large. Please upload a video smaller than 50MB")
             return
             
+        processor = None
         try:
             # Save file temporarily
             with NamedTemporaryFile(delete=False, suffix='.mp4') as tmp_file:
@@ -245,7 +295,9 @@ def main():
             logger.error(f"Processing error: {e}", exc_info=True)
         
         finally:
-            # Force cleanup
+            # Clean up resources
+            if processor:
+                processor.cleanup()
             gc.collect()
 
 if __name__ == "__main__":
