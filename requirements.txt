@@ -4,3 +4,4 @@ mediapipe
 numpy
 scikit-learn
 opencv-python-headless
+pyopengl
