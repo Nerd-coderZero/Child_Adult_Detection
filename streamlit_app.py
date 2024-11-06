@@ -9,6 +9,8 @@ import logging
 from typing import Generator
 import gc
 import pathlib
+import urllib.request
+import shutil
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -20,21 +22,23 @@ tf.get_logger().setLevel('ERROR')
 class VideoProcessor:
     def __init__(self):
         try:
-            # Create a temporary directory with user permissions
-            self.temp_dir = pathlib.Path(gettempdir()) / "mediapipe_models"
+            # Create a temporary directory in a writable location
+            self.temp_dir = pathlib.Path(gettempdir()) / "mediapipe_models_temp"
             self.temp_dir.mkdir(exist_ok=True, parents=True)
             
-            # Set MediaPipe model path environment variable
-            os.environ["MEDIAPIPE_MODEL_PATH"] = str(self.temp_dir)
+            # Download MediaPipe model manually
+            self._download_pose_model()
             
-            # Initialize MediaPipe with lower confidence threshold
+            # Initialize MediaPipe with the downloaded model
             self.mp_pose = mp.solutions.pose
             self.pose = self.mp_pose.Pose(
                 static_image_mode=False,
                 min_detection_confidence=0.3,
                 model_complexity=0,
-                enable_segmentation=False  # Disable unnecessary features
+                enable_segmentation=False,
+                model_path=str(self.temp_dir / "pose_landmark_lite.tflite")
             )
+            
         except Exception as e:
             logger.error(f"Error initializing MediaPipe: {e}")
             st.error("Error initializing video processor. Please try refreshing the page.")
@@ -43,7 +47,27 @@ class VideoProcessor:
         # Initialize models as None
         self.detection_model = None
         self.child_adult_model = None
-        
+    
+    def _download_pose_model(self):
+        """Download MediaPipe pose model to temporary directory"""
+        try:
+            model_name = "pose_landmark_lite.tflite"
+            model_path = self.temp_dir / model_name
+            
+            # Only download if not already present
+            if not model_path.exists():
+                model_url = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task"
+                
+                logger.info(f"Downloading MediaPipe model to {model_path}")
+                with urllib.request.urlopen(model_url) as response:
+                    with open(model_path, 'wb') as f:
+                        shutil.copyfileobj(response, f)
+                
+                logger.info("MediaPipe model downloaded successfully")
+        except Exception as e:
+            logger.error(f"Error downloading MediaPipe model: {e}")
+            raise
+    
     def load_models(self):
         """Lazy loading of models with error handling"""
         if self.detection_model is None:
@@ -257,6 +281,9 @@ def main():
     
     st.title("Person Detection and Classification")
     st.write("Upload a video file (max 50MB) for analysis")
+    
+    # Add a warning about GPU
+    st.warning("Note: This application is running on CPU. Some operations may be slower than on GPU.")
     
     # File uploader with size limit
     uploaded_file = st.file_uploader(
