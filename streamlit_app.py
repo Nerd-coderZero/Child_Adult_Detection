@@ -2,10 +2,7 @@ import cv2
 import numpy as np
 import tensorflow as tf
 import mediapipe as mp
-from tempfile import NamedTemporaryFile
 import streamlit as st
-st.legacy_caching.clear_cache()
-
 
 # Initialize MediaPipe Pose for pose-based classification
 mp_pose = mp.solutions.pose
@@ -23,7 +20,7 @@ def process_frame(frame, model):
     input_tensor = input_tensor[tf.newaxis, ...]
     detections = model(input_tensor)
     return detections
-
+    
 def compute_iou(box1, box2):
     y_min1, x_min1, y_max1, x_max1 = box1
     y_min2, x_min2, y_max2, x_max2 = box2
