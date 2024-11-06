@@ -3,5 +3,5 @@ tensorflow
 mediapipe
 numpy
 scikit-learn
-opencv-python
+opencv-python-headless
 pyopengl
