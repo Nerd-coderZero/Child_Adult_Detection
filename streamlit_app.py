@@ -11,15 +11,11 @@ import pathlib
 import urllib.request
 import shutil
 import os
-from mediapipe import solutions as mp_solutions
+import urllib.request
+from pathlib import Path
 
-# Set custom model path within the app’s writable directory
-custom_model_path = os.path.join(os.getcwd(), "models")
-os.makedirs(model_path, exist_ok=True)
-os.environ['MEDIAPIPE_MODEL_PATH'] = model_path
 
-# Initialize MediaPipe with the new path
-pose = mp_solutions.pose.Pose(model_complexity=1, model_path=model_path)
+
 
 
 # Configure logging
@@ -31,52 +27,42 @@ tf.get_logger().setLevel('ERROR')
 
 class VideoProcessor:
     def __init__(self):
-        try:
-            # Create a temporary directory in a writable location
-            self.temp_dir = pathlib.Path(gettempdir()) / "mediapipe_models_temp"
-            self.temp_dir.mkdir(exist_ok=True, parents=True)
-            
-            # Download MediaPipe model manually
-            self._download_pose_model()
-            
-            # Initialize MediaPipe with the downloaded model
-            self.mp_pose = mp.solutions.pose
-            self.pose = self.mp_pose.Pose(
-                static_image_mode=False,
-                min_detection_confidence=0.3,
-                model_complexity=0,
-                enable_segmentation=False
+        self.mp_pose = mp.solutions.pose
+
+        # Define the directory for storing the model files in a writeable location.
+        self.model_dir = Path("./mediapipe_models")
+        self.model_dir.mkdir(parents=True, exist_ok=True)  # Create if not exists
+
+        # Set custom environment variables for MediaPipe model path.
+        os.environ["MEDIAPIPE_MODEL_COMPLEXITY_PATH"] = str(self.model_dir)
+        os.environ["MEDIAPIPE_POSE_LANDMARK_LITE"] = str(self.model_dir / "pose_landmark_lite.tflite")
+        os.environ["MEDIAPIPE_POSE_LANDMARK_FULL"] = str(self.model_dir / "pose_landmark_full.tflite")
+
+        # Download model files if they don't already exist
+        if not (self.model_dir / "pose_landmark_lite.tflite").exists():
+            self.download_model(
+                "https://storage.googleapis.com/mediapipe-models/pose_landmark_lite.tflite",
+                self.model_dir / "pose_landmark_lite.tflite"
             )
 
-            
-        except Exception as e:
-            logger.error(f"Error initializing MediaPipe: {e}")
-            st.error("Error initializing video processor. Please try refreshing the page.")
-            raise
-        
-        # Initialize models as None
-        self.detection_model = None
-        self.child_adult_model = None
+        if not (self.model_dir / "pose_landmark_full.tflite").exists():
+            self.download_model(
+                "https://storage.googleapis.com/mediapipe-models/pose_landmark_full.tflite",
+                self.model_dir / "pose_landmark_full.tflite"
+            )
+
+        # Initialize MediaPipe Pose with the correct path
+        self.pose = self.mp_pose.Pose(
+            model_complexity=1,  # Use the model complexity level you prefer
+            min_detection_confidence=0.5,
+            min_tracking_confidence=0.5
+        )
+
+    def download_model(self, url, destination):
+        """Download model file if not already present."""
+        urllib.request.urlretrieve(url, destination)
     
-    def _download_pose_model(self):
-        """Download MediaPipe pose model to temporary directory"""
-        try:
-            model_name = "pose_landmark_lite.tflite"
-            model_path = self.temp_dir / model_name
-            
-            # Only download if not already present
-            if not model_path.exists():
-                model_url = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task"
-                
-                logger.info(f"Downloading MediaPipe model to {model_path}")
-                with urllib.request.urlopen(model_url) as response:
-                    with open(model_path, 'wb') as f:
-                        shutil.copyfileobj(response, f)
-                
-                logger.info("MediaPipe model downloaded successfully")
-        except Exception as e:
-            logger.error(f"Error downloading MediaPipe model: {e}")
-            raise
+    
     
     def load_models(self):
         """Lazy loading of models with error handling"""
