@@ -4,13 +4,23 @@ import tensorflow as tf
 import mediapipe as mp
 import streamlit as st
 from tempfile import NamedTemporaryFile, gettempdir
-import os
 import logging
 from typing import Generator
 import gc
 import pathlib
 import urllib.request
 import shutil
+import os
+from mediapipe import solutions as mp_solutions
+
+# Set custom model path within the app’s writable directory
+custom_model_path = os.path.join(os.getcwd(), "models")
+os.makedirs(custom_model_path, exist_ok=True)
+os.environ['MEDIAPIPE_MODEL_PATH'] = custom_model_path
+
+# Initialize MediaPipe with the new path
+pose = mp_solutions.pose.Pose(model_complexity=1, model_path=custom_model_path)
+
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
