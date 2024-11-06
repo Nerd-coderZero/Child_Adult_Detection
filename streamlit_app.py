@@ -135,7 +135,7 @@ def update_tracks(detections, tracks, iou_threshold=0.3, detection_threshold=0.7
     
     return updated_tracks
 
-def draw_boxes_and_ids(frame, tracks, min_age=3):
+def draw_boxes_and_ids(frame, tracks, pose, child_adult_model, min_age=3):
     for track_id, box, age in tracks:
         if age >= min_age:
             y_min, x_min, y_max, x_max = box
@@ -148,6 +148,7 @@ def draw_boxes_and_ids(frame, tracks, min_age=3):
             cv2.putText(frame, f'{person_class} {track_id}', (start_point[0], start_point[1] - 10),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
     return frame
+
 
 def main():
     st.title("Person Detection and Classification")
