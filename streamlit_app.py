@@ -135,6 +135,22 @@ def update_tracks(detections, tracks, iou_threshold=0.3, detection_threshold=0.7
     
     return updated_tracks
 
+def compute_iou(box1, box2):
+    y_min1, x_min1, y_max1, x_max1 = box1
+    y_min2, x_min2, y_max2, x_max2 = box2
+
+    intersect_y_min = max(y_min1, y_min2)
+    intersect_x_min = max(x_min1, x_min2)
+    intersect_y_max = min(y_max1, y_max2)
+    intersect_x_max = min(x_max1, x_max2)
+
+    intersect_area = max(0, intersect_y_max - intersect_y_min) * max(0, intersect_x_max - intersect_x_min)
+    box1_area = (y_max1 - y_min1) * (x_max1 - x_min1)
+    box2_area = (y_max2 - y_min2) * (x_max2 - x_min2)
+
+    union_area = box1_area + box2_area - intersect_area
+    return intersect_area / union_area if union_area > 0 else 0
+
 def draw_boxes_and_ids(frame, tracks, pose, child_adult_model, min_age=3):
     for track_id, box, age in tracks:
         if age >= min_age:
