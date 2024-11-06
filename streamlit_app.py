@@ -28,39 +28,70 @@ tf.get_logger().setLevel('ERROR')
 class VideoProcessor:
     def __init__(self):
         self.mp_pose = mp.solutions.pose
-
-        # Define the directory for storing the model files in a writeable location.
         self.model_dir = Path("./mediapipe_models")
-        self.model_dir.mkdir(parents=True, exist_ok=True)  # Create if not exists
+        self.model_dir.mkdir(parents=True, exist_ok=True)
 
-        # Set custom environment variables for MediaPipe model path.
-        os.environ["MEDIAPIPE_MODEL_COMPLEXITY_PATH"] = str(self.model_dir)
+        # Define MediaPipe model paths
         os.environ["MEDIAPIPE_POSE_LANDMARK_LITE"] = str(self.model_dir / "pose_landmark_lite.tflite")
         os.environ["MEDIAPIPE_POSE_LANDMARK_FULL"] = str(self.model_dir / "pose_landmark_full.tflite")
 
         # Download model files if they don't already exist
         if not (self.model_dir / "pose_landmark_lite.tflite").exists():
-            self.download_model(
-                "https://storage.googleapis.com/mediapipe-models/pose_landmark_lite.tflite",
-                self.model_dir / "pose_landmark_lite.tflite"
-            )
+            self.download_model("https://storage.googleapis.com/mediapipe-models/pose_landmark_lite.tflite", 
+                                self.model_dir / "pose_landmark_lite.tflite")
 
         if not (self.model_dir / "pose_landmark_full.tflite").exists():
-            self.download_model(
-                "https://storage.googleapis.com/mediapipe-models/pose_landmark_full.tflite",
-                self.model_dir / "pose_landmark_full.tflite"
-            )
+            self.download_model("https://storage.googleapis.com/mediapipe-models/pose_landmark_full.tflite", 
+                                self.model_dir / "pose_landmark_full.tflite")
 
-        # Initialize MediaPipe Pose with the correct path
-        self.pose = self.mp_pose.Pose(
-            model_complexity=1,  # Use the model complexity level you prefer
-            min_detection_confidence=0.5,
-            min_tracking_confidence=0.5
-        )
+        # Initialize MediaPipe Pose
+        self.pose = self.mp_pose.Pose(model_complexity=1, min_detection_confidence=0.5, min_tracking_confidence=0.5)
 
     def download_model(self, url, destination):
         """Download model file if not already present."""
         urllib.request.urlretrieve(url, destination)
+
+    def process_video(self, video_path: str, progress_bar, stframe, max_frames: int = 300):
+        """Process video with memory-efficient streaming."""
+        cap = cv2.VideoCapture(video_path)
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        frame_skip = max(1, total_frames // max_frames)
+        processed_frames = 0
+
+        while cap.isOpened() and processed_frames < max_frames:
+            ret, frame = cap.read()
+            if not ret:
+                break
+
+            if processed_frames % frame_skip == 0:
+                # Process frame
+                processed_frame = self._process_single_frame(frame)
+
+                # Update progress and display frame
+                progress_bar.progress(processed_frames / min(total_frames, max_frames))
+                stframe.image(cv2.cvtColor(processed_frame, cv2.COLOR_BGR2RGB), caption=f"Frame {processed_frames}", use_column_width=True)
+
+                del processed_frame  # Force garbage collection
+                gc.collect()
+
+            processed_frames += 1
+
+        cap.release()
+
+    def _process_single_frame(self, frame: np.ndarray) -> np.ndarray:
+        """Process a single frame."""
+        # Run MediaPipe Pose processing here (adjust this if additional processing is needed)
+        results = self.pose.process(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+        if results.pose_landmarks:
+            for landmark in results.pose_landmarks.landmark:
+                x, y = int(landmark.x * frame.shape[1]), int(landmark.y * frame.shape[0])
+                cv2.circle(frame, (x, y), 3, (0, 255, 0), -1)
+        return frame
+
+    def cleanup(self):
+        """Clean up resources."""
+        if hasattr(self, 'pose'):
+            self.pose.close()
     
     
     
@@ -100,88 +131,11 @@ class VideoProcessor:
                 st.error("Error loading classification model. Please check if model file is present.")
                 raise
 
-    def cleanup(self):
-        """Clean up resources"""
-        try:
-            if hasattr(self, 'pose'):
-                self.pose.close()
-            if hasattr(self, 'temp_dir') and self.temp_dir.exists():
-                # Clean up temporary files
-                for file in self.temp_dir.glob('*'):
-                    try:
-                        file.unlink()
-                    except Exception as e:
-                        logger.warning(f"Error cleaning up file {file}: {e}")
-                self.temp_dir.rmdir()
-        except Exception as e:
-            logger.warning(f"Error during cleanup: {e}")
+    
 
-    def process_video(self, video_path: str, progress_bar, stframe,
-                     max_frames: int = 300) -> None:
-        """Process video with memory-efficient streaming"""
-        try:
-            cap = cv2.VideoCapture(video_path)
-            total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-            processed_frames = 0
-            frame_skip = max(1, total_frames // max_frames)
-            tracks = []
+   
 
-            while cap.isOpened() and processed_frames < max_frames:
-                ret, frame = cap.read()
-                if not ret:
-                    break
-
-                if processed_frames % frame_skip == 0:
-                    # Process frame
-                    processed_frame = self._process_single_frame(frame, tracks)
-                    
-                    # Update progress and display
-                    progress = min(1.0, processed_frames / min(total_frames, max_frames))
-                    progress_bar.progress(progress)
-                    
-                    # Display frame
-                    stframe.image(
-                        cv2.cvtColor(processed_frame, cv2.COLOR_BGR2RGB),
-                        caption=f"Frame {processed_frames}",
-                        use_column_width=True
-                    )
-                    
-                    # Force garbage collection
-                    del processed_frame
-                    gc.collect()
-
-                processed_frames += 1
-
-        except Exception as e:
-            logger.error(f"Error processing video: {e}")
-            st.error(f"Error processing video: {str(e)}")
-            
-        finally:
-            cap.release()
-            gc.collect()
-
-    def _process_single_frame(self, frame: np.ndarray, tracks: list) -> np.ndarray:
-        """Process a single frame with error handling"""
-        try:
-            # Ensure models are loaded
-            self.load_models()
-            
-            # Resize frame for faster processing
-            small_frame = cv2.resize(frame, (320, 240))
-            
-            # Run detection
-            input_tensor = tf.convert_to_tensor(small_frame)[tf.newaxis, ...]
-            detections = self.detection_model(input_tensor)
-            
-            # Update tracking
-            tracks = self._update_tracks(detections, tracks)
-            
-            # Draw results
-            return self._draw_results(frame, tracks)
-            
-        except Exception as e:
-            logger.error(f"Frame processing error: {e}")
-            return frame
+    
 
     def _update_tracks(self, detections: dict, tracks: list) -> list:
         """Update object tracks with memory optimization"""
