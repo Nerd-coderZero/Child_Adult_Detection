@@ -141,62 +141,44 @@ def draw_boxes_and_ids(frame, tracks, min_age=3):
                         cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
     return frame
 
-# Streamlit app setup
-st.title("Object Detection and Classification")
-st.write("Upload a video file to detect and classify objects.")
-
-# File upload
-uploaded_file = st.file_uploader("Choose a video...", type=["mp4", "avi", "mov"])
-if uploaded_file is not None:
-    # Save the uploaded file temporarily
-    with NamedTemporaryFile(delete=False) as temp_file:
-        temp_file.write(uploaded_file.read())
-        temp_path = temp_file.name
+def main(video_path):
+    cap = cv2.VideoCapture(video_path)
     
-    # Video processing
-    cap = cv2.VideoCapture(temp_path)
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     fps = int(cap.get(cv2.CAP_PROP_FPS))
     
-    # Prepare an output writer
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-    output_path = "processed_output.mp4"
-    out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+    out = cv2.VideoWriter('output.mp4', fourcc, fps, (width, height))
     
     tracks = []
     frame_id = 0
     
-    # Processing frames
-    stframe = st.empty()
-    progress_bar = st.progress(0)
-    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-
-    while cap.isOpened():
+    while True:
         ret, frame = cap.read()
         if not ret:
             break
-
+        
         frame_id += 1
+        
         if frame_id % 3 != 0:
             continue
-
+        
         small_frame = cv2.resize(frame, (320, 240))
         detections = process_frame(small_frame, detection_model)
         tracks = update_tracks(detections, tracks)
         frame = draw_boxes_and_ids(frame, tracks)
         
-        # Write frame to output video
         out.write(frame)
-
-        # Update progress bar and display frame
-        progress_bar.progress(min(frame_id / total_frames, 1.0))
-        stframe.image(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), channels="RGB")
-
+        
+        cv2.imshow("Object Detection & Tracking", frame)
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
+    
     cap.release()
     out.release()
-    
-    st.success("Processing Complete")
-    
-    # Display output video
-    st.video(output_path)
+    cv2.destroyAllWindows()
+
+if __name__ == "__main__":
+    main("2.mp4")
+
