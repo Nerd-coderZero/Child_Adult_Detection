@@ -15,11 +15,11 @@ from mediapipe import solutions as mp_solutions
 
 # Set custom model path within the app’s writable directory
 custom_model_path = os.path.join(os.getcwd(), "models")
-os.makedirs(custom_model_path, exist_ok=True)
-os.environ['MEDIAPIPE_MODEL_PATH'] = custom_model_path
+os.makedirs(model_path, exist_ok=True)
+os.environ['MEDIAPIPE_MODEL_PATH'] = model_path
 
 # Initialize MediaPipe with the new path
-pose = mp_solutions.pose.Pose(model_complexity=1, model_path=custom_model_path)
+pose = mp_solutions.pose.Pose(model_complexity=1, model_path=model_path)
 
 
 # Configure logging
