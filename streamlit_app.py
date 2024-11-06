@@ -135,6 +135,20 @@ def update_tracks(detections, tracks, iou_threshold=0.3, detection_threshold=0.7
     
     return updated_tracks
 
+def draw_boxes_and_ids(frame, tracks, min_age=3):
+    for track_id, box, age in tracks:
+        if age >= min_age:
+            y_min, x_min, y_max, x_max = box
+            start_point = (int(x_min * frame.shape[1]), int(y_min * frame.shape[0]))
+            end_point = (int(x_max * frame.shape[1]), int(y_max * frame.shape[0]))
+            cv2.rectangle(frame, start_point, end_point, (0, 255, 0), 2)
+            
+            person_class = classify_person_with_pose(frame, box)
+            
+            cv2.putText(frame, f'{person_class} {track_id}', (start_point[0], start_point[1] - 10),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
+    return frame
+
 def main():
     st.title("Person Detection and Classification")
     
