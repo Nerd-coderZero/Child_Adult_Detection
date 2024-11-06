@@ -173,6 +173,59 @@ def process_video(uploaded_file, detection_model, pose_model, mp_pose, child_adu
             cap.release()
             out.release()
             raise e
+def update_tracks(detections, tracks, iou_threshold=0.3, detection_threshold=0.7):
+    detection_boxes = detections['detection_boxes'].numpy()[0]
+    detection_scores = detections['detection_scores'].numpy()[0]
+    detection_classes = detections['detection_classes'].numpy()[0].astype(int)
+    
+    person_detections = [(i, box) for i, (box, score, cls) in enumerate(zip(detection_boxes, detection_scores, detection_classes)) 
+                         if cls == 1 and score > detection_threshold]
+    
+    updated_tracks = []
+    used_detections = set()
+    
+    for track_id, track_box, track_age in tracks:
+        best_iou = 0
+        best_detection = None
+        for detection_id, detection_box in person_detections:
+            if detection_id in used_detections:
+                continue
+            iou = compute_iou(track_box, detection_box)
+            if iou > best_iou:
+                best_iou = iou
+                best_detection = detection_id, detection_box
+        
+        if best_iou > iou_threshold:
+            updated_tracks.append((track_id, best_detection[1], track_age + 1))
+            used_detections.add(best_detection[0])
+        else:
+            if track_age > 0:
+                updated_tracks.append((track_id, track_box, track_age - 1))
+    
+    max_id = max([id for id, _, _ in tracks]) if tracks else 0
+    for detection_id, detection_box in person_detections:
+        if detection_id not in used_detections:
+            max_id += 1
+            updated_tracks.append((max_id, detection_box, 1))
+    
+    return updated_tracks
+
+def compute_iou(box1, box2):
+    y_min1, x_min1, y_max1, x_max1 = box1
+    y_min2, x_min2, y_max2, x_max2 = box2
+
+    intersect_y_min = max(y_min1, y_min2)
+    intersect_x_min = max(x_min1, x_min2)
+    intersect_y_max = min(y_max1, y_max2)
+    intersect_x_max = min(x_max1, x_max2)
+
+    intersect_area = max(0, intersect_y_max - intersect_y_min) * max(0, intersect_x_max - intersect_x_min)
+    box1_area = (y_max1 - y_min1) * (x_max1 - x_min1)
+    box2_area = (y_max2 - y_min2) * (x_max2 - x_min2)
+
+    union_area = box1_area + box2_area - intersect_area
+    return intersect_area / union_area if union_area > 0 else 0
+
 
 def main():
     st.title("Person Detection and Classification")
