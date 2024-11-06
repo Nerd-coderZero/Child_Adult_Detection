@@ -1,6 +1,6 @@
 streamlit
-opencv-python-headless
 tensorflow
 mediapipe
 numpy
 scikit-learn
+opencv-python-headless
