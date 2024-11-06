@@ -26,8 +26,9 @@ def load_models():
 def process_frame(frame, _model):
     input_tensor = tf.convert_to_tensor(frame)
     input_tensor = input_tensor[tf.newaxis, ...]
-    detections = model(input_tensor)
+    detections = _model(input_tensor)  # Use _model instead of model
     return detections
+
 
 def process_video(uploaded_file, detection_model, pose, child_adult_model):
     # Create temporary directory for processing
