@@ -151,6 +151,56 @@ def compute_iou(box1, box2):
     union_area = box1_area + box2_area - intersect_area
     return intersect_area / union_area if union_area > 0 else 0
 
+def classify_person_with_pose(frame, box, padding=0.1, child_threshold=0.8, adult_threshold=1.1):
+    # Extract the bounding box coordinates
+    y_min, x_min, y_max, x_max = box
+    height, width, _ = frame.shape
+    
+    # Calculate padding (10% of bounding box size by default)
+    pad_y = int((y_max - y_min) * padding * height)
+    pad_x = int((x_max - x_min) * padding * width)
+    
+    # Ensure coordinates stay within frame boundaries
+    start_point = (max(0, int(x_min * width - pad_x)), max(0, int(y_min * height - pad_y)))
+    end_point = (min(width, int(x_max * width + pad_x)), min(height, int(y_max * height + pad_y)))
+    
+    # Crop the person from the frame using the adjusted bounding box
+    cropped_person = frame[start_point[1]:end_point[1], start_point[0]:end_point[0]]
+    
+    # Convert the cropped image to RGB for MediaPipe Pose processing
+    cropped_rgb = cv2.cvtColor(cropped_person, cv2.COLOR_BGR2RGB)
+    
+    # Process the cropped image with MediaPipe Pose
+    results = pose.process(cropped_rgb)
+    
+    if results.pose_landmarks:
+        # Get the landmark positions for shoulder and ankle
+        left_shoulder = results.pose_landmarks.landmark[mp_pose.PoseLandmark.LEFT_SHOULDER]
+        left_ankle = results.pose_landmarks.landmark[mp_pose.PoseLandmark.LEFT_ANKLE]
+        right_shoulder = results.pose_landmarks.landmark[mp_pose.PoseLandmark.RIGHT_SHOULDER]
+        right_ankle = results.pose_landmarks.landmark[mp_pose.PoseLandmark.RIGHT_ANKLE]
+        
+        # Calculate average vertical distance from shoulders to ankles
+        height_estimate = (abs(left_shoulder.y - left_ankle.y) + abs(right_shoulder.y - right_ankle.y)) / 2
+        
+        # Define thresholds for classification
+        if height_estimate < child_threshold:
+            return "Child"
+        else: 
+            return "Adult"
+    
+    # Fallback to the existing classification model if no pose landmarks are detected
+    resized_person = cv2.resize(cropped_person, (128, 128))
+    resized_person = resized_person / 255.0
+    input_tensor = np.expand_dims(resized_person, axis=0)
+    
+    prediction = child_adult_model.predict(input_tensor)
+    
+    if prediction[0] < 0.6:
+        return "Child"
+    else:
+        return "Adult"
+        
 def draw_boxes_and_ids(frame, tracks, pose, child_adult_model, min_age=3):
     for track_id, box, age in tracks:
         if age >= min_age:
