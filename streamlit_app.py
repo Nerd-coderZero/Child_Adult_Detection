@@ -23,7 +23,7 @@ def load_models():
 
 # Process frame with batch processing
 @st.cache_data
-def process_frame(frame, model):
+def process_frame(frame, _model):
     input_tensor = tf.convert_to_tensor(frame)
     input_tensor = input_tensor[tf.newaxis, ...]
     detections = model(input_tensor)
