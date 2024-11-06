@@ -35,9 +35,9 @@ class VideoProcessor:
                 static_image_mode=False,
                 min_detection_confidence=0.3,
                 model_complexity=0,
-                enable_segmentation=False,
-                model_path=str(self.temp_dir / "pose_landmark_lite.tflite")
+                enable_segmentation=False
             )
+
             
         except Exception as e:
             logger.error(f"Error initializing MediaPipe: {e}")
@@ -75,8 +75,10 @@ class VideoProcessor:
                 # Check if model files exist
                 model_path = "ssd_mobilenet_v2_fpnlite_320x320_coco17_tpu-8/saved_model"
                 if not os.path.exists(model_path):
-                    raise FileNotFoundError(f"Detection model not found at {model_path}")
-                
+                    logger.error(f"Detection model not found at {model_path}")
+                else:
+                    logger.info("Detection model path verified.")
+                    
                 self.detection_model = tf.saved_model.load(model_path)
                 logger.info("Detection model loaded successfully")
             except Exception as e:
