@@ -35,6 +35,9 @@ class VideoProcessor:
         os.environ["MEDIAPIPE_POSE_LANDMARK_LITE"] = str(self.model_dir / "pose_landmark_lite.tflite")
         os.environ["MEDIAPIPE_POSE_LANDMARK_FULL"] = str(self.model_dir / "pose_landmark_full.tflite")
 
+        # URL for GitLab model (pose_landmark_lite)
+        model_url = "https://gitlab.psyai.net/CoderJackLiu/mpshareddll/-/raw/a529d704de3c8bffece511ea2b408c3d97f1ca4b/mediapipe/modules/pose_landmark/pose_landmark_lite.tflite"
+        
         # Download model files if they don't already exist
         if not (self.model_dir / "pose_landmark_lite.tflite").exists():
             self.download_model("https://storage.googleapis.com/mediapipe-models/pose_landmark_lite.tflite", 
