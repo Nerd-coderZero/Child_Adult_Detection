@@ -5,6 +5,6 @@ torch
 torchvision
 inference-sdk
 filterpy
-scikit-image
-Pillow
-Sort
+scikit-image==0.21.0  # Ensure compatibility with Python <3.12
+Pillow==9.0.0  # Compatible version
+Sort==0.9.4  # Or a similar stable version
