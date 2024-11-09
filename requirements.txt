@@ -7,4 +7,4 @@ inference-sdk
 filterpy
 scikit-image==0.21.0  # Ensure compatibility with Python <3.12
 Pillow  # Compatible version
-  # Or a similar stable version
+sort-tracker # Or a similar stable version
