@@ -8,3 +8,4 @@ filterpy
 scikit-image==0.21.0  # Ensure compatibility with Python <3.12
 Pillow  # Compatible version
 sort-tracker # Or a similar stable version
+git+https://github.com/abewley/sort.git
