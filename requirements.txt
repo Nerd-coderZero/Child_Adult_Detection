@@ -7,3 +7,4 @@ inference-sdk
 filterpy
 scikit-image
 Pillow
+sort
