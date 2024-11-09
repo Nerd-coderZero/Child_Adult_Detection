@@ -1,187 +1,240 @@
 import cv2
 import numpy as np
-import tensorflow as tf
-import mediapipe as mp
-from sklearn.svm import SVC
-from sklearn.preprocessing import StandardScaler
+import torch
+from PIL import Image
+import io
+from inference_sdk import InferenceHTTPClient
+from sort import Sort
 
-# Initialize MediaPipe Pose for pose-based classification
-mp_pose = mp.solutions.pose
-pose = mp_pose.Pose(static_image_mode=False, min_detection_confidence=0.5)
-
-# Load the pre-trained TensorFlow Object Detection model
-detection_model_dir = "ssd_mobilenet_v2_fpnlite_320x320_coco17_tpu-8/saved_model"
-detection_model = tf.saved_model.load(detection_model_dir)
-
-# Load the pre-trained child/adult classification model
-scaler = StandardScaler()
-child_adult_model = SVC(kernel='rbf', C=1, gamma='scale')
-child_adult_model.fit(X_train, y_train)
-
-def process_frame(frame, model):
-    input_tensor = tf.convert_to_tensor(frame)
-    input_tensor = input_tensor[tf.newaxis, ...]
-    detections = model(input_tensor)
-    return detections
-
-def compute_iou(box1, box2):
-    y_min1, x_min1, y_max1, x_max1 = box1
-    y_min2, x_min2, y_max2, x_max2 = box2
-
-    intersect_y_min = max(y_min1, y_min2)
-    intersect_x_min = max(x_min1, x_min2)
-    intersect_y_max = min(y_max1, y_max2)
-    intersect_x_max = min(x_max1, x_max2)
-
-    intersect_area = max(0, intersect_y_max - intersect_y_min) * max(0, intersect_x_max - intersect_x_min)
-    box1_area = (y_max1 - y_min1) * (x_max1 - x_min1)
-    box2_area = (y_max2 - y_min2) * (x_max2 - x_min2)
-
-    union_area = box1_area + box2_area - intersect_area
-    return intersect_area / union_area if union_area > 0 else 0
-
-def classify_person_with_pose(frame, box, padding=0.1):
-    # Extract the bounding box coordinates
-    y_min, x_min, y_max, x_max = box
-    height, width, _ = frame.shape
-    
-    # Calculate padding (10% of bounding box size by default)
-    pad_y = int((y_max - y_min) * padding * height)
-    pad_x = int((x_max - x_min) * padding * width)
-    
-    # Ensure coordinates stay within frame boundaries
-    start_point = (max(0, int(x_min * width - pad_x)), max(0, int(y_min * height - pad_y)))
-    end_point = (min(width, int(x_max * width + pad_x)), min(height, int(y_max * height + pad_y)))
-    
-    # Crop the person from the frame using the adjusted bounding box
-    cropped_person = frame[start_point[1]:end_point[1], start_point[0]:end_point[0]]
-    
-    # Convert the cropped image to RGB for MediaPipe Pose processing
-    cropped_rgb = cv2.cvtColor(cropped_person, cv2.COLOR_BGR2RGB)
-    
-    # Process the cropped image with MediaPipe Pose
-    results = pose.process(cropped_rgb)
-    
-    if results.pose_landmarks:
-        # Get the landmark positions for shoulder and ankle
-        left_shoulder = results.pose_landmarks.landmark[mp_pose.PoseLandmark.LEFT_SHOULDER]
-        left_ankle = results.pose_landmarks.landmark[mp_pose.PoseLandmark.LEFT_ANKLE]
-        right_shoulder = results.pose_landmarks.landmark[mp_pose.PoseLandmark.RIGHT_SHOULDER]
-        right_ankle = results.pose_landmarks.landmark[mp_pose.PoseLandmark.RIGHT_ANKLE]
+class PersonTracker:
+    def __init__(self, confidence_threshold=0.5):
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        print(f"Using device: {self.device}")
         
-        # Calculate average vertical distance from shoulders to ankles
-        height_estimate = (abs(left_shoulder.y - left_ankle.y) + abs(right_shoulder.y - right_ankle.y)) / 2
+        # Initialize YOLOv5 model
+        print("Loading YOLOv5 model...")
+        self.yolo_model = torch.hub.load('ultralytics/yolov5', 'yolov5s', pretrained=True)
+        self.yolo_model.to(self.device)
+        self.yolo_model.conf = confidence_threshold
         
-        # Use the SVM model to classify the person
-        person_features = [height_estimate, box[2] - box[0], box[3] - box[1]]
-        person_features = scaler.transform([person_features])
-        class_label = child_adult_model.predict(person_features)[0]
+        # Initialize SORT tracker
+        print("Initializing SORT tracker...")
+        self.tracker = Sort(
+            max_age=30,
+            min_hits=5,
+            iou_threshold=0.25
+        )
         
-        if class_label == 0:
-            return "Child"
-        else:
-            return "Adult"
+        # Initialize Roboflow client
+        print("Initializing Roboflow client...")
+        self.classifier_client = InferenceHTTPClient(
+            api_url="https://classify.roboflow.com",
+            api_key="ElqVQt7rQnBAEBOdYRjv"
+        )
+        
+        # Track classifications
+        self.person_classifications = {}
+        self.classification_history = {}
+        self.history_size = 5
     
-    # Fallback to the existing classification model if no pose landmarks are detected
-    resized_person = cv2.resize(cropped_person, (128, 128))
-    resized_person = resized_person / 255.0
-    input_tensor = np.expand_dims(resized_person, axis=0)
+    def detect_person(self, frame):
+        """Detect persons using YOLOv5."""
+        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        results = self.yolo_model(frame_rgb)
+        
+        detections = []
+        for *box, conf, cls in results.xyxy[0].cpu().numpy():
+            if int(cls) == 0:  # person class
+                x1, y1, x2, y2 = map(int, box)
+                detections.append([x1, y1, x2, y2, conf])
+        
+        return np.array(detections) if len(detections) > 0 else np.empty((0, 5))
     
-    prediction = child_adult_model.predict(input_tensor)
-    
-    if prediction[0] < 0.5:
-        return "Child"
-    else:
-        return "Adult"
+    def update_classification_history(self, track_id, classification, confidence):
+        """Update classification history with temporal smoothing."""
+        if track_id not in self.classification_history:
+            self.classification_history[track_id] = []
+        
+        # Add new classification to history
+        self.classification_history[track_id].append((classification, confidence))
+        
+        # Keep only last N classifications
+        if len(self.classification_history[track_id]) > self.history_size:
+            self.classification_history[track_id].pop(0)
+        
+        # Exponential weighted voting
+        votes = {'adult': 0.0, 'child': 0.0}
+        weights = [0.6 ** i for i in range(len(self.classification_history[track_id]))]
+        
+        for (cls, conf), weight in zip(self.classification_history[track_id], weights):
+            votes[cls] += conf * weight
+        
+        # Normalize votes
+        total_weight = sum(weights)
+        for cls in votes:
+            votes[cls] /= total_weight
+        
+        final_class = max(votes.items(), key=lambda x: x[1])[0]
+        avg_confidence = votes[final_class]
+        
+        return final_class, avg_confidence
 
-def update_tracks(detections, tracks, iou_threshold=0.3, detection_threshold=0.7):
-    detection_boxes = detections['detection_boxes'].numpy()[0]
-    detection_scores = detections['detection_scores'].numpy()[0]
-    detection_classes = detections['detection_classes'].numpy()[0].astype(int)
-    
-    person_detections = [(i, box) for i, (box, score, cls) in enumerate(zip(detection_boxes, detection_scores, detection_classes)) 
-                         if cls == 1 and score > detection_threshold]
-    
-    updated_tracks = []
-    used_detections = set()
-    
-    for track_id, track_box, track_age in tracks:
-        best_iou = 0
-        best_detection = None
-        for detection_id, detection_box in person_detections:
-            if detection_id in used_detections:
-                continue
-            iou = compute_iou(track_box, detection_box)
-            if iou > best_iou:
-                best_iou = iou
-                best_detection = detection_id, detection_box
-        
-        if best_iou > iou_threshold:
-            updated_tracks.append((track_id, best_detection[1], track_age + 1))
-            used_detections.add(best_detection[0])
-        else:
-            if track_age > 0:
-                updated_tracks.append((track_id, track_box, track_age - 1))
-    
-    max_id = max([id for id, _, _ in tracks]) if tracks else 0
-    for detection_id, detection_box in person_detections:
-        if detection_id not in used_detections:
-            max_id += 1
-            updated_tracks.append((max_id, detection_box, 1))
-    
-    return updated_tracks
-
-def draw_boxes_and_ids(frame, tracks, min_age=3):
-    for track_id, box, age in tracks:
-        if age >= min_age:
-            y_min, x_min, y_max, x_max = box
-            start_point = (int(x_min * frame.shape[1]), int(y_min * frame.shape[0]))
-            end_point = (int(x_max * frame.shape[1]), int(y_max * frame.shape[0]))
-            cv2.rectangle(frame, start_point, end_point, (0, 255, 0), 2)
+    def classify_person(self, frame, bbox):
+        """Enhanced classification with multiple samples."""
+        try:
+            x1, y1, x2, y2 = map(int, bbox[:4])
             
-            person_class = classify_person_with_pose(frame, box)
+            # Add margin to bounding box
+            margin = int((y2 - y1) * 0.15)  # 15% margin
+            y1 = max(0, y1 - margin)
+            y2 = min(frame.shape[0], y2 + margin)
+            x1 = max(0, x1 - margin)
+            x2 = min(frame.shape[1], x2 + margin)
             
-            cv2.putText(frame, f'{person_class} {track_id}', (start_point[0], start_point[1] - 10),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
-    return frame
+            if x2 <= x1 or y2 <= y1 or (x2 - x1) < 30 or (y2 - y1) < 30:
+                return None, 0.0
+            
+            person_img = frame[y1:y2, x1:x2]
+            if person_img.size == 0:
+                return None, 0.0
+            
+            # Create two versions of the image (original and flipped)
+            pil_img = Image.fromarray(cv2.cvtColor(person_img, cv2.COLOR_BGR2RGB))
+            flipped_img = pil_img.transpose(Image.FLIP_LEFT_RIGHT)
+            
+            # Get predictions for both versions
+            results = []
+            for img in [pil_img, flipped_img]:
+                img_byte_arr = io.BytesIO()
+                img.save(img_byte_arr, format='JPEG')
+                img_byte_arr = img_byte_arr.getvalue()
+                
+                result = self.classifier_client.infer(
+                    img_byte_arr,
+                    model_id="child-adult-classifier/1"
+                )
+                results.append((result['predicted_class'], result['confidence']))
+            
+            # Combine predictions
+            if results[0][0] == results[1][0]:  # If both predictions agree
+                return results[0][0], max(results[0][1], results[1][1])
+            else:  # If predictions disagree, return the one with higher confidence
+                return max(results, key=lambda x: x[1])
+                
+        except Exception as e:
+            print(f"Error in classification: {e}")
+            return None, 0.0
 
-def main(video_path):
-    cap = cv2.VideoCapture(video_path)
+    def update_tracking(self, frame, detections):
+        """Update tracking with improved classification logic."""
+        if len(detections) == 0:
+            return []
+        
+        tracked_objects = self.tracker.update(detections)
+        results = []
+        
+        for track in tracked_objects:
+            track_id = int(track[4])
+            bbox = track[:4]
+            
+            # Get classification and confidence
+            classification, confidence = self.classify_person(frame, bbox)
+            
+            if classification is not None:
+                # Update classification history and get final classification
+                final_class, avg_confidence = self.update_classification_history(
+                    track_id, classification, confidence
+                )
+                
+                if track_id not in self.person_classifications:
+                    self.person_classifications[track_id] = {
+                        'class': final_class,
+                        'confidence': avg_confidence
+                    }
+                elif avg_confidence > self.person_classifications[track_id]['confidence']:
+                    self.person_classifications[track_id] = {
+                        'class': final_class,
+                        'confidence': avg_confidence
+                    }
+            
+            current_class = (self.person_classifications.get(track_id, {})
+                            .get('class', 'adult'))
+            
+            results.append({
+                'track_id': track_id,
+                'bbox': bbox,
+                'class': current_class,
+                'confidence': self.person_classifications.get(
+                    track_id, {}).get('confidence', 0.0)
+            })
+        
+        return results
     
-    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    fps = int(cap.get(cv2.CAP_PROP_FPS))
+    def draw_results(self, frame, results):
+        """Draw tracking results on frame."""
+        for result in results:
+            bbox = result['bbox']
+            track_id = result['track_id']
+            classification = result['class']
+            confidence = result.get('confidence', 0.0)
+            
+            x1, y1, x2, y2 = map(int, bbox)
+            
+            # Color based on classification
+            color = (0, 255, 0) if classification == 'adult' else (0, 0, 255)
+            
+            # Draw bounding box
+            cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+            
+            # Draw label
+            label = f"{classification} ({confidence:.2f}) ID:{track_id}"
+            cv2.putText(frame, label, (x1, y1 - 10),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.9, color, 2)
+        
+        # Draw statistics
+        adult_count = sum(1 for r in results if r['class'] == 'adult')
+        child_count = sum(1 for r in results if r['class'] == 'child')
+        cv2.putText(frame, f"Adults: {adult_count} Children: {child_count}",
+                   (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+        
+        return frame
+
+def main():
+    # Initialize tracker
+    tracker = PersonTracker(confidence_threshold=0.5)
     
-    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-    out = cv2.VideoWriter('output.mp4', fourcc, fps, (width, height))
+    # Open video capture
+    print("Opening video capture...")
+    cap = cv2.VideoCapture('2.mp4')  # Use 0 for webcam or provide video file path
     
-    tracks = []
-    frame_id = 0
+    if not cap.isOpened():
+        print("Error: Could not open video capture")
+        return
     
+    print("Processing video...")
     while True:
         ret, frame = cap.read()
         if not ret:
+            print("Error: Could not read frame")
             break
         
-        frame_id += 1
+        # Detect and track persons
+        detections = tracker.detect_person(frame)
+        results = tracker.update_tracking(frame, detections)
         
-        if frame_id % 3 != 0:
-            continue
+        # Draw results
+        frame = tracker.draw_results(frame, results)
         
-        small_frame = cv2.resize(frame, (320, 240))
-        detections = process_frame(small_frame, detection_model)
-        tracks = update_tracks(detections, tracks)
-        frame = draw_boxes_and_ids(frame, tracks)
+        # Display the frame
+        cv2.imshow('Person Tracker', frame)
         
-        out.write(frame)
-        
-        cv2.imshow("Object Detection & Tracking", frame)
+        # Break loop on 'q' press
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
     
+    # Cleanup
     cap.release()
-    out.release()
     cv2.destroyAllWindows()
 
 if __name__ == "__main__":
-    main("2.mp4")
+    main()
