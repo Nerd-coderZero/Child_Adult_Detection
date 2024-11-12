@@ -67,15 +67,7 @@ class EnhancedPersonTracker:
             nn.Dropout(p=0.3),
             nn.Linear(1280, 2)
         )
-        try:
-            tracker = EnhancedPersonTracker(
-                model_path='best_model.pth',
-                confidence_threshold=0.6
-            )
-            return tracker
-        except Exception as e:
-            st.error(f"Error loading model: {str(e)}")
-            return None
+        
         try:
             checkpoint = torch.load(model_path, map_location=self.device)
             # Handle different checkpoint formats
@@ -96,7 +88,17 @@ class EnhancedPersonTracker:
         except Exception as e:
             self.logger.error(f"Error loading model from {model_path}: {e}")
     
-    
+    def load_model():
+        """Initialize the tracker with proper error handling for Streamlit"""
+        try:
+            tracker = EnhancedPersonTracker(
+                model_path='best_model.pth',
+                confidence_threshold=0.6
+            )
+            return tracker
+        except Exception as e:
+            st.error(f"Error loading model: {str(e)}")
+            return None
 
     def _initialize_tracker(self):
         """Initialize DeepSort tracker with parameters optimized for close interaction"""
