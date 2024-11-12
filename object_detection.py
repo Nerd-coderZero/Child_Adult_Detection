@@ -312,11 +312,11 @@ class EnhancedPersonTracker:
         frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         fps = int(cap.get(cv2.CAP_PROP_FPS))
 
-        if output_path:
-            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-            out = cv2.VideoWriter(output_path, fourcc, fps, (frame_width, frame_height))
-
         try:
+            if output_path:
+                fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+                out = cv2.VideoWriter(output_path, fourcc, fps, (frame_width, frame_height))
+
             while cap.isOpened():
                 ret, frame = cap.read()
                 if not ret:
@@ -376,6 +376,10 @@ class EnhancedPersonTracker:
 
                 if output_path:
                     out.write(frame)
+                elif show_display:
+                    cv2.imshow('Tracking', frame)
+                    if cv2.waitKey(1) & 0xFF == ord('q'):
+                        break
 
         except Exception as e:
             self.logger.error(f"Error processing video: {e}")
@@ -384,16 +388,14 @@ class EnhancedPersonTracker:
             cap.release()
             if output_path:
                 out.release()
-            if show_display:
+                # Return the processed video as a byte stream
+                with open(output_path, 'rb') as f:
+                    return f.read()
+            elif show_display:
                 cv2.destroyAllWindows()
             os.remove(temp_video_path)
 
-        # Return the processed video as a byte stream
-        if output_path:
-            with open(output_path, 'rb') as f:
-                return f.read()
-        else:
-            return None
+        return None
 
     def _calculate_iou(self, bbox1: np.ndarray, bbox2: np.ndarray) -> float:
         """Calculate IoU between two bounding boxes"""
