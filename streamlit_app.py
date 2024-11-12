@@ -1,5 +1,5 @@
 import streamlit as st
-from your_detection_script import EnhancedPersonTracker
+from object_detection import EnhancedPersonTracker
 
 def main():
     st.title("Therapist and Child Detection and Tracking")
