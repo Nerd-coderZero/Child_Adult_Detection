@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 # Initialize `tracker_initialized` if it doesn't exist
 if "tracker_initialized" not in st.session_state:
-    st.session_state["tracker_initialized"] = False
+    st.session_state["tracker_initialized"] = True
 if 'tracker' not in st.session_state:
     st.session_state.tracker = None
 if 'processed_video' not in st.session_state:
