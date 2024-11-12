@@ -591,8 +591,7 @@ def setup_webcam_page():
                     "audio": False  # Explicitly disable audio
                 },
                 async_processing=True,
-                translations_path=None,  # Disable translations to reduce complexity
-                callback_on_error=on_error
+                on_error=on_error  # Changed from callback_on_error to on_error
             )
             
             if webrtc_ctx.state.playing:
@@ -711,9 +710,11 @@ def process_uploaded_video(video_file):
             out.release()
 
 def main():
+    # Configure async event loop
     configure_async_event_loop()
     
     st.title("Person Tracking and Classification App")
+    
     # Initialize session state for processed video
     if 'processed_video' not in st.session_state:
         st.session_state.processed_video = None
