@@ -293,11 +293,17 @@ class EnhancedPersonTracker:
             self.logger.error("No video file provided")
             return
 
+        # Save the uploaded video file to a temporary file
+        temp_video_path = os.path.join('/tmp', video_file.name)
+        with open(temp_video_path, 'wb') as f:
+            f.write(video_file.getvalue())
+
         # Read the video file
-        cap = cv2.VideoCapture(video_file.read())
+        cap = cv2.VideoCapture(temp_video_path)
 
         if not cap.isOpened():
             self.logger.error(f"Could not open video file")
+            os.remove(temp_video_path)
             return
 
         frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
@@ -314,8 +320,52 @@ class EnhancedPersonTracker:
                 if not ret:
                     break
 
-                # Process the frame
-                # ... (rest of the processing code)
+                # Get detections
+                detections = self.detect_persons(frame)
+                tracks = []  # Initialize empty tracks list
+                
+                # Update tracks
+                if len(detections) > 0:
+                    # Convert detections to format expected by DeepSort
+                    detection_list = []
+                    for det in detections:
+                        detection_list.append(([det[0], det[1], det[2] - det[0], det[3] - det[1]], det[4], 'person'))
+                    
+                    # Get updated tracks
+                    tracks = self.tracker.update_tracks(detection_list, frame=frame)
+
+                    # Process each track
+                    for track in tracks:
+                        if not track.is_confirmed():
+                            continue
+
+                        track_id = track.track_id
+                        ltwh = track.to_ltwh()
+                        bbox = np.array([
+                            ltwh[0], ltwh[1],
+                            ltwh[0] + ltwh[2], ltwh[1] + ltwh[3]
+                        ])
+                        
+                        # Check for overlap with other tracks
+                        overlap_detected = False
+                        for other_track in tracks:
+                            if other_track.track_id != track_id:
+                                other_bbox = other_track.to_ltwh()
+                                iou = self._calculate_iou(
+                                    bbox, 
+                                    np.array([other_bbox[0], other_bbox[1], 
+                                            other_bbox[0] + other_bbox[2], 
+                                            other_bbox[1] + other_bbox[3]])
+                                )
+                                if iou > 0.3:  # Significant overlap threshold
+                                    overlap_detected = True
+                                    break
+                        
+                        if not overlap_detected:
+                            # Only classify if no significant overlap
+                            label, confidence = self.predict_person(frame, bbox, track_id)
+                            if label is not None:
+                                self.draw_detection(frame, bbox, track_id, label, confidence)
 
                 if show_display:
                     cv2.imshow('Tracking', frame)
@@ -334,6 +384,7 @@ class EnhancedPersonTracker:
                 out.release()
             if show_display:
                 cv2.destroyAllWindows()
+            os.remove(temp_video_path)
 
         # Return the processed video as a byte stream
         if output_path:
