@@ -1,5 +1,6 @@
 import streamlit as st
 from object_detection import EnhancedPersonTracker
+from io import BytesIO
 
 def main():
     st.title("Therapist and Child Detection and Tracking")
@@ -11,8 +12,10 @@ def main():
         # Initialize the person tracker
         tracker = EnhancedPersonTracker(model_path='best_model.pth')
 
-        # Process the video and display the results
+        # Process the video and get the output bytes
         output_bytes = tracker.process_video(video_file, show_display=False)
+
+        # Display the video using Streamlit's built-in video player
         st.video(output_bytes)
 
 if __name__ == "__main__":
