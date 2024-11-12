@@ -8,3 +8,5 @@ pathlib
 deep-sort-realtime
 logging
 ultralytics
+streamlit
+Pillow
