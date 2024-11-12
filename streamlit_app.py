@@ -59,34 +59,7 @@ class EnhancedPersonTracker:
             self.logger.error(f"Error initializing models: {e}")
             raise
 
-    def _load_model(self, model_path: str) -> nn.Module:
-        """Load classification model with proper error handling"""
-        model = models.efficientnet_b0(pretrained=False)
-        
-        model.classifier = nn.Sequential(
-            nn.Dropout(p=0.3),
-            nn.Linear(1280, 2)
-        )
-        
-        try:
-            checkpoint = torch.load(model_path, map_location=self.device)
-            # Handle different checkpoint formats
-            if isinstance(checkpoint, dict):
-                if 'model_state_dict' in checkpoint:
-                    model.load_state_dict(checkpoint['model_state_dict'])
-                elif 'state_dict' in checkpoint:
-                    model.load_state_dict(checkpoint['state_dict'])
-                else:
-                    model.load_state_dict(checkpoint)
-            else:
-                model.load_state_dict(checkpoint)
-                
-            model.to(self.device)
-            model.eval()
-            return model
-            
-        except Exception as e:
-            self.logger.error(f"Error loading model from {model_path}: {e}")
+    
     
     def load_model():
         """Initialize the tracker with proper error handling for Streamlit"""
