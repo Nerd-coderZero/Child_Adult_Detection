@@ -1,18 +1,11 @@
 import streamlit as st
 import cv2
 import torch
-import torch.nn as nn
-from torchvision import models
 import numpy as np
-import tempfile
 import os
-import threading
-from deep_sort_realtime.deepsort_tracker import DeepSort
 import time
-from pathlib import Path
 import logging
-import logging
-from typing import Tuple, List, Dict, Optional
+from deep_sort_realtime.deepsort_tracker import DeepSort
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -25,7 +18,6 @@ class SharedState:
     def __init__(self):
         self.tracker = None
         self.tracker_initialized = False
-        self.stop_webcam = False
 
 shared_state = SharedState()
 
@@ -45,62 +37,7 @@ def initialize_model():
             return False
     return True
 
-def process_webcam():
-    """Handle webcam feed processing"""
-    cap = cv2.VideoCapture(0)
-    
-    # Create placeholders for the video feed and status
-    frame_placeholder = st.empty()
-    status_placeholder = st.empty()
-    
-    try:
-        while cap.isOpened() and not shared_state.stop_webcam:
-            ret, frame = cap.read()
-            if not ret:
-                status_placeholder.error("Failed to get webcam feed")
-                break
-                
-            # Process frame
-            if shared_state.tracker_initialized:
-                try:
-                    detections = shared_state.tracker.detect_persons(frame)
-                    if len(detections) > 0:
-                        detection_list = []
-                        for det in detections:
-                            detection_list.append(([det[0], det[1], det[2] - det[0], det[3] - det[1]], det[4], 'person'))
-                        
-                        tracks = shared_state.tracker.tracker.update_tracks(detection_list, frame=frame)
-                        
-                        for track in tracks:
-                            if not track.is_confirmed():
-                                continue
-                                
-                            track_id = track.track_id
-                            ltwh = track.to_ltwh()
-                            bbox = np.array([
-                                ltwh[0], ltwh[1],
-                                ltwh[0] + ltwh[2], ltwh[1] + ltwh[3]
-                            ])
-                            
-                            label, confidence = shared_state.tracker.predict_person(frame, bbox, track_id)
-                            if label is not None:
-                                shared_state.tracker.draw_detection(frame, bbox, track_id, label, confidence)
-                except Exception as e:
-                    logger.error(f"Error processing frame: {str(e)}")
-            
-            # Convert BGR to RGB for display
-            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            
-            # Display the frame
-            frame_placeholder.image(frame, channels="RGB")
-            
-            # Control frame rate
-            time.sleep(0.03)  # ~30 FPS
-            
-    except Exception as e:
-        status_placeholder.error(f"Error: {str(e)}")
-    finally:
-        cap.release()
+
 
 
 
@@ -520,111 +457,78 @@ class EnhancedPersonTracker:
         cv2.putText(frame, label_text, (label_x, label_y + label_height - 2), 
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
                           
-def setup_webcam_page():
-    """Setup webcam page with improved camera handling"""
-    st.title("Person Tracking with Webcam")
+def process_uploaded_video(uploaded_file):
+    """Process an uploaded video file for person tracking"""
+    # Temporary file to save the uploaded video
+    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4')
+    temp_file.write(uploaded_file.read())
+    temp_file.close()
     
-    # Initialize model first
-    if not initialize_model():
-        st.error("Failed to initialize model")
-        return
-        
-    # Create placeholders
-    status_placeholder = st.empty()
-    frame_placeholder = st.empty()
+    cap = cv2.VideoCapture(temp_file.name)
     
-    # Camera control button
-    if 'camera_running' not in st.session_state:
-        st.session_state.camera_running = False
-        
-    if st.button('Start/Stop Camera'):
-        st.session_state.camera_running = not st.session_state.camera_running
-        
-    if st.session_state.camera_running:
-        status_placeholder.info("Starting camera...")
-        try:
-            # Try multiple camera indices
-            cap = None
-            for idx in range(2):  # Try indices 0 and 1
-                cap = cv2.VideoCapture(idx)
-                if cap.isOpened():
-                    break
-                    
-            if not cap or not cap.isOpened():
-                status_placeholder.error("Failed to open webcam. Please check your camera connection.")
-                return
-                
-            status_placeholder.success("Camera initialized successfully!")
-            
-            try:
-                while st.session_state.camera_running:
-                    ret, frame = cap.read()
-                    if not ret:
-                        status_placeholder.error("Failed to get frame from webcam")
-                        break
+    # Output video settings
+    output_path = "processed_video.mp4"
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+    
+    try:
+        while cap.isOpened():
+            ret, frame = cap.read()
+            if not ret:
+                break
+
+            if shared_state.tracker_initialized:
+                try:
+                    detections = shared_state.tracker.detect_persons(frame)
+                    if len(detections) > 0:
+                        detection_list = []
+                        for det in detections:
+                            detection_list.append(([det[0], det[1], det[2] - det[0], det[3] - det[1]], det[4], 'person'))
                         
-                    # Process frame using your existing tracker
-                    if shared_state.tracker_initialized:
-                        try:
-                            detections = shared_state.tracker.detect_persons(frame)
-                            if len(detections) > 0:
-                                detection_list = []
-                                for det in detections:
-                                    detection_list.append(([det[0], det[1], det[2] - det[0], det[3] - det[1]], det[4], 'person'))
-                                
-                                tracks = shared_state.tracker.tracker.update_tracks(detection_list, frame=frame)
-                                
-                                for track in tracks:
-                                    if not track.is_confirmed():
-                                        continue
-                                        
-                                    track_id = track.track_id
-                                    ltwh = track.to_ltwh()
-                                    bbox = np.array([
-                                        ltwh[0], ltwh[1],
-                                        ltwh[0] + ltwh[2], ltwh[1] + ltwh[3]
-                                    ])
-                                    
-                                    label, confidence = shared_state.tracker.predict_person(frame, bbox, track_id)
-                                    if label is not None:
-                                        shared_state.tracker.draw_detection(frame, bbox, track_id, label, confidence)
-                        except Exception as e:
-                            logger.error(f"Error processing frame: {str(e)}")
-                    
-                    # Convert BGR to RGB for display
-                    frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                    
-                    # Display the frame
-                    frame_placeholder.image(frame, channels="RGB")
-                    
-                    # Control frame rate
-                    time.sleep(0.03)  # ~30 FPS
-                    
-            except Exception as e:
-                status_placeholder.error(f"Error during video processing: {str(e)}")
-                
-            finally:
-                cap.release()
-                
-        except Exception as e:
-            status_placeholder.error(f"Error initializing camera: {str(e)}")
-    else:
-        status_placeholder.info("Camera stopped")
+                        tracks = shared_state.tracker.tracker.update_tracks(detection_list, frame=frame)
+                        
+                        for track in tracks:
+                            if not track.is_confirmed():
+                                continue
+                            track_id = track.track_id
+                            ltwh = track.to_ltwh()
+                            bbox = np.array([
+                                ltwh[0], ltwh[1],
+                                ltwh[0] + ltwh[2], ltwh[1] + ltwh[3]
+                            ])
+                            label, confidence = shared_state.tracker.predict_person(frame, bbox, track_id)
+                            if label is not None:
+                                shared_state.tracker.draw_detection(frame, bbox, track_id, label, confidence)
+                except Exception as e:
+                    logger.error(f"Error processing frame: {str(e)}")
+
+            out.write(frame)
+    except Exception as e:
+        logger.error(f"Error during video processing: {str(e)}")
+    finally:
+        cap.release()
+        out.release()
+        os.remove(temp_file.name)
+
+    return output_path
 
 def main():
     st.title("Person Tracking and Classification App")
-    
+
     # Initialize session state for processed video
     if 'processed_video' not in st.session_state:
         st.session_state.processed_video = None
-    
+
     # Sidebar for app options
     st.sidebar.title("Settings")
     input_option = st.sidebar.radio(
         "Choose Input Source",
-        ["Upload Video", "Use Webcam"]
+        ["Upload Video"]
     )
-    
+
     if input_option == "Upload Video":
         # File uploader
         uploaded_file = st.file_uploader("Choose a video file", type=['mp4', 'avi', 'mov'])
@@ -651,9 +555,6 @@ def main():
                             file_name="processed_video.mp4",
                             mime="video/mp4"
                         )
-    
-    else:  # Webcam option
-        setup_webcam_page()
 
 if __name__ == "__main__":
     main()
