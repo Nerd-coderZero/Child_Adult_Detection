@@ -11,8 +11,18 @@ from typing import Tuple, List, Dict, Optional
 import tempfile
 from PIL import Image
 import av
-from streamlit_webrtc import webrtc_streamer, WebRtcMode, RTCConfiguration
+from streamlit_webrtc import webrtc_streamer, WebRtcMode, RTCConfiguration, VideoProcessorBase
+import queue
+import threading
+import time
 
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Global queue for frame processing
+FRAME_QUEUE = queue.Queue()
+RESULT_QUEUE = queue.Queue()
 class EnhancedPersonTracker:
     # ... [Keep the existing EnhancedPersonTracker class implementation] ...
     # Note: The original class remains unchanged, just copy it here
@@ -516,38 +526,120 @@ def process_uploaded_video(tracker, video_file):
     
     return output_file.name
 
-class VideoProcessor:
-    def __init__(self, tracker):
+class VideoProcessor(VideoProcessorBase):
+    def __init__(self, tracker) -> None:
         self.tracker = tracker
+        self._frame_lock = threading.Lock()
+        self.frame_queue = FRAME_QUEUE
+        self.result_queue = RESULT_QUEUE
 
-    def recv(self, frame):
+    def recv(self, frame: av.VideoFrame) -> av.VideoFrame:
         img = frame.to_ndarray(format="bgr24")
         
-        # Process frame
-        detections = self.tracker.detect_persons(img)
-        if len(detections) > 0:
-            detection_list = []
-            for det in detections:
-                detection_list.append(([det[0], det[1], det[2] - det[0], det[3] - det[1]], det[4], 'person'))
-            
-            tracks = self.tracker.tracker.update_tracks(detection_list, frame=img)
-            
-            for track in tracks:
-                if not track.is_confirmed():
-                    continue
+        try:
+            # Process frame
+            with self._frame_lock:
+                detections = self.tracker.detect_persons(img)
+                if len(detections) > 0:
+                    detection_list = []
+                    for det in detections:
+                        detection_list.append(([det[0], det[1], det[2] - det[0], det[3] - det[1]], det[4], 'person'))
                     
-                track_id = track.track_id
-                ltwh = track.to_ltwh()
-                bbox = np.array([
-                    ltwh[0], ltwh[1],
-                    ltwh[0] + ltwh[2], ltwh[1] + ltwh[3]
-                ])
-                
-                label, confidence = self.tracker.predict_person(img, bbox, track_id)
-                if label is not None:
-                    self.tracker.draw_detection(img, bbox, track_id, label, confidence)
+                    tracks = self.tracker.tracker.update_tracks(detection_list, frame=img)
+                    
+                    for track in tracks:
+                        if not track.is_confirmed():
+                            continue
+                            
+                        track_id = track.track_id
+                        ltwh = track.to_ltwh()
+                        bbox = np.array([
+                            ltwh[0], ltwh[1],
+                            ltwh[0] + ltwh[2], ltwh[1] + ltwh[3]
+                        ])
+                        
+                        label, confidence = self.tracker.predict_person(img, bbox, track_id)
+                        if label is not None:
+                            self.tracker.draw_detection(img, bbox, track_id, label, confidence)
         
+        except Exception as e:
+            logger.error(f"Error processing frame: {str(e)}")
+            # Return original frame if processing fails
+            return av.VideoFrame.from_ndarray(img, format="bgr24")
+
         return av.VideoFrame.from_ndarray(img, format="bgr24")
+
+def initialize_webrtc():
+    """Initialize WebRTC with proper configuration and error handling"""
+    try:
+        rtc_configuration = RTCConfiguration(
+            {"iceServers": [
+                {"urls": ["stun:stun.l.google.com:19302"]},
+                {
+                    "urls": ["turn:numb.viagenie.ca"],
+                    "username": "webrtc@live.com",
+                    "credential": "muazkh",
+                }
+            ]}
+        )
+        
+        return rtc_configuration
+    except Exception as e:
+        logger.error(f"Error initializing WebRTC: {str(e)}")
+        return None
+
+def setup_webcam_page(tracker):
+    """Setup webcam page with proper error handling"""
+    st.write("Webcam Feed")
+    
+    # Add status indicator
+    status_placeholder = st.empty()
+    status_placeholder.info("Initializing webcam...")
+    
+    try:
+        rtc_config = initialize_webrtc()
+        if rtc_config is None:
+            status_placeholder.error("Failed to initialize WebRTC configuration")
+            return
+        
+        # Add webcam options
+        st.sidebar.subheader("Webcam Settings")
+        video_quality = st.sidebar.selectbox(
+            "Video Quality",
+            ["Low", "Medium", "High"],
+            index=1
+        )
+        
+        # Convert quality settings to resolution
+        quality_settings = {
+            "Low": {"width": 640, "height": 480},
+            "Medium": {"width": 854, "height": 480},
+            "High": {"width": 1280, "height": 720}
+        }
+        
+        webrtc_ctx = webrtc_streamer(
+            key="person-tracking",
+            mode=WebRtcMode.SENDRECV,
+            rtc_configuration=rtc_config,
+            video_processor_factory=lambda: VideoProcessor(tracker),
+            media_stream_constraints={
+                "video": {
+                    "width": quality_settings[video_quality]["width"],
+                    "height": quality_settings[video_quality]["height"],
+                    "frameRate": {"ideal": 30}
+                },
+            },
+            async_processing=True,
+        )
+        
+        if webrtc_ctx.state.playing:
+            status_placeholder.success("Webcam is active")
+        else:
+            status_placeholder.warning("Webcam is not active")
+            
+    except Exception as e:
+        logger.error(f"Error in webcam setup: {str(e)}")
+        status_placeholder.error(f"Error setting up webcam: {str(e)}")
 
 def main():
     st.title("Person Tracking and Classification App")
@@ -559,11 +651,17 @@ def main():
         ["Upload Video", "Use Webcam"]
     )
     
-    # Load model
-    tracker = load_model()
-    if tracker is None:
-        st.error("Failed to initialize the model. Please check if model file exists.")
-        return
+    # Load model with error handling
+    try:
+        with st.spinner("Loading model..."):
+            tracker = EnhancedPersonTracker(
+                model_path='best_model.pth',
+                confidence_threshold=0.6
+            )
+            st.success("Model loaded successfully!")
+    except Exception as e:
+        st.error(f"Failed to load model: {str(e)}")
+        st.stop()
     
     if input_option == "Upload Video":
         # File uploader
@@ -573,32 +671,24 @@ def main():
             # Add a process button
             if st.button("Process Video"):
                 with st.spinner("Processing video..."):
-                    output_path = process_uploaded_video(tracker, uploaded_file)
-                    
-                    # Display processed video
-                    st.success("Video processed successfully!")
-                    st.video(output_path)
-                    
-                    # Download button
-                    with open(output_path, 'rb') as file:
-                        st.download_button(
-                            label="Download processed video",
-                            data=file,
-                            file_name="processed_video.mp4",
-                            mime="video/mp4"
-                        )
+                    try:
+                        output_path = process_uploaded_video(tracker, uploaded_file)
+                        st.success("Video processed successfully!")
+                        st.video(output_path)
+                        
+                        # Download button
+                        with open(output_path, 'rb') as file:
+                            st.download_button(
+                                label="Download processed video",
+                                data=file,
+                                file_name="processed_video.mp4",
+                                mime="video/mp4"
+                            )
+                    except Exception as e:
+                        st.error(f"Error processing video: {str(e)}")
     
     else:  # Webcam option
-        st.write("Webcam Feed")
-        webrtc_ctx = webrtc_streamer(
-            key="person-tracking",
-            mode=WebRtcMode.SENDRECV,
-            rtc_configuration=RTCConfiguration(
-                {"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]}
-            ),
-            video_processor_factory=lambda: VideoProcessor(tracker),
-            async_processing=True,
-        )
+        setup_webcam_page(tracker)
 
 if __name__ == "__main__":
     main()
