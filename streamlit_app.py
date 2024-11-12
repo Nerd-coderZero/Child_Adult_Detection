@@ -62,6 +62,7 @@ class EnhancedPersonTracker:
     def _load_model(self, model_path: str) -> nn.Module:
         """Load classification model with proper error handling"""
         model = models.efficientnet_b0(pretrained=False)
+        model_path = 'best_model.pth'
         model.classifier = nn.Sequential(
             nn.Dropout(p=0.3),
             nn.Linear(1280, 2)
