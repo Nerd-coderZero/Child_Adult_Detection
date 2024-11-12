@@ -548,12 +548,7 @@ def setup_webcam_page():
                 {"urls": ["stun:stun2.l.google.com:19302"]},
                 {"urls": ["stun:stun3.l.google.com:19302"]},
                 {"urls": ["stun:stun4.l.google.com:19302"]}
-            ],
-            "iceTransportPolicy": "all",
-            "bundlePolicy": "max-bundle",
-            "rtcpMuxPolicy": "require",
-            "iceCandidatePoolSize": 1
-            }
+            ]}
         )
         
         # Add webcam options
@@ -570,11 +565,6 @@ def setup_webcam_page():
             "Medium": {"width": 854, "height": 480},
             "High": {"width": 1280, "height": 720}
         }
-
-        # Add error handling callback
-        def on_error(exception):
-            logger.error(f"WebRTC error: {str(exception)}")
-            status_placeholder.error(f"WebRTC error occurred: {str(exception)}")
         
         try:
             webrtc_ctx = webrtc_streamer(
@@ -588,10 +578,9 @@ def setup_webcam_page():
                         "height": quality_settings[video_quality]["height"],
                         "frameRate": {"ideal": 30}
                     },
-                    "audio": False  # Explicitly disable audio
+                    "audio": False
                 },
-                async_processing=True,
-                on_error=on_error  # Changed from callback_on_error to on_error
+                async_processing=True
             )
             
             if webrtc_ctx.state.playing:
