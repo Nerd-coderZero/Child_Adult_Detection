@@ -10,3 +10,4 @@ logging
 ultralytics
 streamlit
 Pillow
+av
