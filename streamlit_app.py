@@ -25,8 +25,6 @@ if 'processed_video' not in st.session_state:
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 # Global queue for frame processing
-FRAME_QUEUE = queue.Queue()
-RESULT_QUEUE = queue.Queue()
 
 class EnhancedPersonTracker:
     # ... [Keep the existing EnhancedPersonTracker class implementation] ...
