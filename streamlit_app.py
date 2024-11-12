@@ -526,88 +526,88 @@ class VideoProcessor(VideoProcessorBase):
 
         return av.VideoFrame.from_ndarray(img, format="bgr24")
 
-    def setup_webcam_page():
-        """Setup webcam page with proper error handling"""
-        st.write("Webcam Feed")
+def setup_webcam_page():
+    """Setup webcam page with proper error handling"""
+    st.write("Webcam Feed")
+    
+    # Add status indicator
+    status_placeholder = st.empty()
+    status_placeholder.info("Initializing webcam...")
+    
+    try:
+        # Initialize model before setting up WebRTC
+        if not initialize_model():
+            status_placeholder.error("Failed to initialize model")
+            return
+
+        # More comprehensive ICE server configuration
+        rtc_configuration = RTCConfiguration(
+            {"iceServers": [
+                {"urls": ["stun:stun.l.google.com:19302"]},
+                {"urls": ["stun:stun1.l.google.com:19302"]},
+                {"urls": ["stun:stun2.l.google.com:19302"]},
+                {"urls": ["stun:stun3.l.google.com:19302"]},
+                {"urls": ["stun:stun4.l.google.com:19302"]}
+            ],
+            "iceTransportPolicy": "all",
+            "bundlePolicy": "max-bundle",
+            "rtcpMuxPolicy": "require",
+            "iceCandidatePoolSize": 1
+            }
+        )
         
-        # Add status indicator
-        status_placeholder = st.empty()
-        status_placeholder.info("Initializing webcam...")
+        # Add webcam options
+        st.sidebar.subheader("Webcam Settings")
+        video_quality = st.sidebar.selectbox(
+            "Video Quality",
+            ["Low", "Medium", "High"],
+            index=1
+        )
+        
+        # Convert quality settings to resolution
+        quality_settings = {
+            "Low": {"width": 640, "height": 480},
+            "Medium": {"width": 854, "height": 480},
+            "High": {"width": 1280, "height": 720}
+        }
+
+        # Add error handling callback
+        def on_error(exception):
+            logger.error(f"WebRTC error: {str(exception)}")
+            status_placeholder.error(f"WebRTC error occurred: {str(exception)}")
         
         try:
-            # Initialize model before setting up WebRTC
-            if not initialize_model():
-                status_placeholder.error("Failed to initialize model")
-                return
-    
-            # More comprehensive ICE server configuration
-            rtc_configuration = RTCConfiguration(
-                {"iceServers": [
-                    {"urls": ["stun:stun.l.google.com:19302"]},
-                    {"urls": ["stun:stun1.l.google.com:19302"]},
-                    {"urls": ["stun:stun2.l.google.com:19302"]},
-                    {"urls": ["stun:stun3.l.google.com:19302"]},
-                    {"urls": ["stun:stun4.l.google.com:19302"]}
-                ],
-                "iceTransportPolicy": "all",
-                "bundlePolicy": "max-bundle",
-                "rtcpMuxPolicy": "require",
-                "iceCandidatePoolSize": 1
-                }
-            )
-            
-            # Add webcam options
-            st.sidebar.subheader("Webcam Settings")
-            video_quality = st.sidebar.selectbox(
-                "Video Quality",
-                ["Low", "Medium", "High"],
-                index=1
-            )
-            
-            # Convert quality settings to resolution
-            quality_settings = {
-                "Low": {"width": 640, "height": 480},
-                "Medium": {"width": 854, "height": 480},
-                "High": {"width": 1280, "height": 720}
-            }
-    
-            # Add error handling callback
-            def on_error(exception):
-                logger.error(f"WebRTC error: {str(exception)}")
-                status_placeholder.error(f"WebRTC error occurred: {str(exception)}")
-            
-            try:
-                webrtc_ctx = webrtc_streamer(
-                    key="person-tracking",
-                    mode=WebRtcMode.SENDRECV,
-                    rtc_configuration=rtc_configuration,
-                    video_processor_factory=VideoProcessor,
-                    media_stream_constraints={
-                        "video": {
-                            "width": quality_settings[video_quality]["width"],
-                            "height": quality_settings[video_quality]["height"],
-                            "frameRate": {"ideal": 30}
-                        },
-                        "audio": False  # Explicitly disable audio
+            webrtc_ctx = webrtc_streamer(
+                key="person-tracking",
+                mode=WebRtcMode.SENDRECV,
+                rtc_configuration=rtc_configuration,
+                video_processor_factory=VideoProcessor,
+                media_stream_constraints={
+                    "video": {
+                        "width": quality_settings[video_quality]["width"],
+                        "height": quality_settings[video_quality]["height"],
+                        "frameRate": {"ideal": 30}
                     },
-                    async_processing=True,
-                    translations_path=None,  # Disable translations to reduce complexity
-                    callback_on_error=on_error
-                )
-                
-                if webrtc_ctx.state.playing:
-                    status_placeholder.success("Webcam is active")
-                else:
-                    status_placeholder.warning("Webcam is not active")
-                    
-            except Exception as e:
-                logger.error(f"Error in WebRTC setup: {str(e)}")
-                status_placeholder.error(f"Error setting up WebRTC: {str(e)}")
-                return
+                    "audio": False  # Explicitly disable audio
+                },
+                async_processing=True,
+                translations_path=None,  # Disable translations to reduce complexity
+                callback_on_error=on_error
+            )
+            
+            if webrtc_ctx.state.playing:
+                status_placeholder.success("Webcam is active")
+            else:
+                status_placeholder.warning("Webcam is not active")
                 
         except Exception as e:
-            logger.error(f"Error in webcam setup: {str(e)}")
-            status_placeholder.error(f"Error setting up webcam: {str(e)}")
+            logger.error(f"Error in WebRTC setup: {str(e)}")
+            status_placeholder.error(f"Error setting up WebRTC: {str(e)}")
+            return
+            
+    except Exception as e:
+        logger.error(f"Error in webcam setup: {str(e)}")
+        status_placeholder.error(f"Error setting up webcam: {str(e)}")
 
 def load_model():
     """Initialize the tracker with proper error handling for Streamlit"""
