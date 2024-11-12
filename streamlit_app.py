@@ -475,28 +475,19 @@ def load_model():
 
 def initialize_model():
     """Initialize the tracker if not already initialized"""
-    if not st.session_state.tracker_initialized:
+    if not st.session_state["tracker_initialized"]:
         try:
-            st.session_state.tracker = EnhancedPersonTracker(
+            st.session_state["tracker"] = EnhancedPersonTracker(
                 model_path='best_model.pth',
                 confidence_threshold=0.6
             )
-            st.session_state.tracker_initialized = True
+            st.session_state["tracker_initialized"] = True
             return True
         except Exception as e:
             st.error(f"Error initializing model: {str(e)}")
             return False
     return True
-    
-    if 'tracker_initialized' not in st.session_state:
-        st.session_state.tracker_initialized = False
-    if 'tracker' not in st.session_state:
-        st.session_state.tracker = None
-    if 'processed_video' not in st.session_state:
-        st.session_state.processed_video = None
-    
-    # Set torch configurations to avoid warnings
-    torch.classes.__path__ = []
+
 
 
 
