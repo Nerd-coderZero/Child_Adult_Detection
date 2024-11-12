@@ -14,17 +14,23 @@ import av
 from streamlit_webrtc import webrtc_streamer, WebRtcMode, RTCConfiguration, VideoProcessorBase
 import os
 import sys
+import threading
 
-# Initialize session state
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Initialize session state at the very beginning
+if 'tracker_initialized' not in st.session_state:
+    st.session_state.tracker_initialized = False
 if 'tracker' not in st.session_state:
     st.session_state.tracker = None
 if 'processed_video' not in st.session_state:
     st.session_state.processed_video = None
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-# Global queue for frame processing
+# Set torch configurations to avoid warnings
+torch.classes.__path__ = []
+
 
 class EnhancedPersonTracker:
     # ... [Keep the existing EnhancedPersonTracker class implementation] ...
@@ -465,8 +471,129 @@ def load_model():
         st.error(f"Error loading model: {str(e)}")
         return None
 
+def initialize_model():
+    """Initialize the tracker if not already initialized"""
+    if not st.session_state.tracker_initialized:
+        try:
+            st.session_state.tracker = EnhancedPersonTracker(
+                model_path='best_model.pth',
+                confidence_threshold=0.6
+            )
+            st.session_state.tracker_initialized = True
+            return True
+        except Exception as e:
+            st.error(f"Error initializing model: {str(e)}")
+            return False
+    return True
+
+class VideoProcessor(VideoProcessorBase):
+    def __init__(self) -> None:
+        super().__init__()
+        self._frame_lock = threading.Lock()
+        # Initialize tracker if not already initialized
+        if not st.session_state.tracker_initialized:
+            initialize_model()
+
+    def recv(self, frame: av.VideoFrame) -> av.VideoFrame:
+        if not st.session_state.tracker_initialized:
+            return frame
+
+        img = frame.to_ndarray(format="bgr24")
+        
+        try:
+            # Process frame
+            with self._frame_lock:
+                detections = st.session_state.tracker.detect_persons(img)
+                if len(detections) > 0:
+                    detection_list = []
+                    for det in detections:
+                        detection_list.append(([det[0], det[1], det[2] - det[0], det[3] - det[1]], det[4], 'person'))
+                    
+                    tracks = st.session_state.tracker.tracker.update_tracks(detection_list, frame=img)
+                    
+                    for track in tracks:
+                        if not track.is_confirmed():
+                            continue
+                            
+                        track_id = track.track_id
+                        ltwh = track.to_ltwh()
+                        bbox = np.array([
+                            ltwh[0], ltwh[1],
+                            ltwh[0] + ltwh[2], ltwh[1] + ltwh[3]
+                        ])
+                        
+                        label, confidence = st.session_state.tracker.predict_person(img, bbox, track_id)
+                        if label is not None:
+                            st.session_state.tracker.draw_detection(img, bbox, track_id, label, confidence)
+        
+        except Exception as e:
+            logger.error(f"Error processing frame: {str(e)}")
+            return av.VideoFrame.from_ndarray(img, format="bgr24")
+
+        return av.VideoFrame.from_ndarray(img, format="bgr24")
+
+def setup_webcam_page():
+    """Setup webcam page with proper error handling"""
+    st.write("Webcam Feed")
+    
+    # Add status indicator
+    status_placeholder = st.empty()
+    status_placeholder.info("Initializing webcam...")
+    
+    try:
+        # Initialize model before setting up WebRTC
+        if not initialize_model():
+            status_placeholder.error("Failed to initialize model")
+            return
+
+        rtc_configuration = RTCConfiguration(
+            {"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]}
+        )
+        
+        # Add webcam options
+        st.sidebar.subheader("Webcam Settings")
+        video_quality = st.sidebar.selectbox(
+            "Video Quality",
+            ["Low", "Medium", "High"],
+            index=1
+        )
+        
+        # Convert quality settings to resolution
+        quality_settings = {
+            "Low": {"width": 640, "height": 480},
+            "Medium": {"width": 854, "height": 480},
+            "High": {"width": 1280, "height": 720}
+        }
+        
+        webrtc_ctx = webrtc_streamer(
+            key="person-tracking",
+            mode=WebRtcMode.SENDRECV,
+            rtc_configuration=rtc_configuration,
+            video_processor_factory=VideoProcessor,
+            media_stream_constraints={
+                "video": {
+                    "width": quality_settings[video_quality]["width"],
+                    "height": quality_settings[video_quality]["height"],
+                    "frameRate": {"ideal": 30}
+                },
+            },
+            async_processing=True,
+        )
+        
+        if webrtc_ctx.state.playing:
+            status_placeholder.success("Webcam is active")
+        else:
+            status_placeholder.warning("Webcam is not active")
+            
+    except Exception as e:
+        logger.error(f"Error in webcam setup: {str(e)}")
+        status_placeholder.error(f"Error setting up webcam: {str(e)}")
+
 def process_uploaded_video(video_file):
     """Process uploaded video file"""
+    if not initialize_model():
+        return None
+
     try:
         # Create temp directory if it doesn't exist
         temp_dir = tempfile.mkdtemp()
@@ -550,119 +677,12 @@ def process_uploaded_video(video_file):
         if 'out' in locals():
             out.release()
 
-class VideoProcessor(VideoProcessorBase):
-    def __init__(self) -> None:
-        # Initialize without requiring tracker as parameter
-        self.tracker = st.session_state.tracker
-        self._frame_lock = threading.Lock()
-
-    def recv(self, frame: av.VideoFrame) -> av.VideoFrame:
-        img = frame.to_ndarray(format="bgr24")
-        
-        try:
-            # Process frame
-            with self._frame_lock:
-                detections = self.tracker.detect_persons(img)
-                if len(detections) > 0:
-                    detection_list = []
-                    for det in detections:
-                        detection_list.append(([det[0], det[1], det[2] - det[0], det[3] - det[1]], det[4], 'person'))
-                    
-                    tracks = self.tracker.tracker.update_tracks(detection_list, frame=img)
-                    
-                    for track in tracks:
-                        if not track.is_confirmed():
-                            continue
-                            
-                        track_id = track.track_id
-                        ltwh = track.to_ltwh()
-                        bbox = np.array([
-                            ltwh[0], ltwh[1],
-                            ltwh[0] + ltwh[2], ltwh[1] + ltwh[3]
-                        ])
-                        
-                        label, confidence = self.tracker.predict_person(img, bbox, track_id)
-                        if label is not None:
-                            self.tracker.draw_detection(img, bbox, track_id, label, confidence)
-        
-        except Exception as e:
-            logger.error(f"Error processing frame: {str(e)}")
-            # Return original frame if processing fails
-            return av.VideoFrame.from_ndarray(img, format="bgr24")
-
-        return av.VideoFrame.from_ndarray(img, format="bgr24")
-
-def initialize_webrtc():
-    """Initialize WebRTC with proper configuration and error handling"""
-    try:
-        rtc_configuration = RTCConfiguration(
-            {"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]}
-        )
-        return rtc_configuration
-    except Exception as e:
-        logger.error(f"Error initializing WebRTC: {str(e)}")
-        return None
-
-def setup_webcam_page():
-    """Setup webcam page with proper error handling"""
-    st.write("Webcam Feed")
-    
-    # Add status indicator
-    status_placeholder = st.empty()
-    status_placeholder.info("Initializing webcam...")
-    
-    try:
-        rtc_config = initialize_webrtc()
-        if rtc_config is None:
-            status_placeholder.error("Failed to initialize WebRTC configuration")
-            return
-        
-        # Add webcam options
-        st.sidebar.subheader("Webcam Settings")
-        video_quality = st.sidebar.selectbox(
-            "Video Quality",
-            ["Low", "Medium", "High"],
-            index=1
-        )
-        
-        # Convert quality settings to resolution
-        quality_settings = {
-            "Low": {"width": 640, "height": 480},
-            "Medium": {"width": 854, "height": 480},
-            "High": {"width": 1280, "height": 720}
-        }
-        
-        webrtc_ctx = webrtc_streamer(
-            key="person-tracking",
-            mode=WebRtcMode.SENDRECV,
-            rtc_configuration=rtc_config,
-            video_processor_factory=VideoProcessor,  # Remove lambda and tracker parameter
-            media_stream_constraints={
-                "video": {
-                    "width": quality_settings[video_quality]["width"],
-                    "height": quality_settings[video_quality]["height"],
-                    "frameRate": {"ideal": 30}
-                },
-            },
-            async_processing=True,
-        )
-        
-        if webrtc_ctx.state.playing:
-            status_placeholder.success("Webcam is active")
-        else:
-            status_placeholder.warning("Webcam is not active")
-            
-    except Exception as e:
-        logger.error(f"Error in webcam setup: {str(e)}")
-        status_placeholder.error(f"Error setting up webcam: {str(e)}")
-
 def main():
     st.title("Person Tracking and Classification App")
     
     # Initialize model first
     with st.spinner("Loading model..."):
-        tracker = load_model()
-        if tracker is None:
+        if not initialize_model():
             st.error("Failed to initialize the model. Please check if model file exists.")
             return
 
@@ -701,7 +721,7 @@ def main():
                         )
     
     else:  # Webcam option
-        setup_webcam_page()  # Use the new setup function
+        setup_webcam_page()
 
 if __name__ == "__main__":
     main()
