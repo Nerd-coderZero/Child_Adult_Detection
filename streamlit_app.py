@@ -5,6 +5,7 @@ import numpy as np
 import os
 import time
 import logging
+from typing import Tuple
 from deep_sort_realtime.deepsort_tracker import DeepSort
 
 # Configure logging
