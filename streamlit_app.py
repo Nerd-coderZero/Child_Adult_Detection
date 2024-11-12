@@ -8,7 +8,9 @@ import threading
 import time
 from pathlib import Path
 import logging
-import tuple
+import logging
+from typing import Tuple, List, Dict, Optional
+
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
