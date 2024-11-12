@@ -1,11 +1,8 @@
-streamlit
-opencv-contrib-python-headless
-numpy
+opencv-python
 torch
 torchvision
-inference-sdk
-filterpy
-scikit-image==0.21.0  # Ensure compatibility with Python <3.12
-Pillow  # Compatible version
-lap
-scipy
+numpy
+pathlib
+deep-sort-realtime
+logging
+ultralytics
