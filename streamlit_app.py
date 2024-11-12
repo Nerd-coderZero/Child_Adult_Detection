@@ -551,11 +551,10 @@ def process_uploaded_video(video_file):
             out.release()
 
 class VideoProcessor(VideoProcessorBase):
-    def __init__(self, tracker) -> None:
-        self.tracker = tracker
+    def __init__(self) -> None:
+        # Initialize without requiring tracker as parameter
+        self.tracker = st.session_state.tracker
         self._frame_lock = threading.Lock()
-        self.frame_queue = FRAME_QUEUE
-        self.result_queue = RESULT_QUEUE
 
     def recv(self, frame: av.VideoFrame) -> av.VideoFrame:
         img = frame.to_ndarray(format="bgr24")
@@ -597,22 +596,14 @@ def initialize_webrtc():
     """Initialize WebRTC with proper configuration and error handling"""
     try:
         rtc_configuration = RTCConfiguration(
-            {"iceServers": [
-                {"urls": ["stun:stun.l.google.com:19302"]},
-                {
-                    "urls": ["turn:numb.viagenie.ca"],
-                    "username": "webrtc@live.com",
-                    "credential": "muazkh",
-                }
-            ]}
+            {"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]}
         )
-        
         return rtc_configuration
     except Exception as e:
         logger.error(f"Error initializing WebRTC: {str(e)}")
         return None
 
-def setup_webcam_page(tracker):
+def setup_webcam_page():
     """Setup webcam page with proper error handling"""
     st.write("Webcam Feed")
     
@@ -645,7 +636,7 @@ def setup_webcam_page(tracker):
             key="person-tracking",
             mode=WebRtcMode.SENDRECV,
             rtc_configuration=rtc_config,
-            video_processor_factory=lambda: VideoProcessor(tracker),
+            video_processor_factory=VideoProcessor,  # Remove lambda and tracker parameter
             media_stream_constraints={
                 "video": {
                     "width": quality_settings[video_quality]["width"],
@@ -710,17 +701,7 @@ def main():
                         )
     
     else:  # Webcam option
-        st.write("Webcam Feed")
-        
-        webrtc_ctx = webrtc_streamer(
-            key="person-tracking",
-            mode=WebRtcMode.SENDRECV,
-            rtc_configuration=RTCConfiguration(
-                {"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]}
-            ),
-            video_processor_factory=VideoProcessor,
-            async_processing=True,
-        )
+        setup_webcam_page()  # Use the new setup function
 
 if __name__ == "__main__":
     main()
