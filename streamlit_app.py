@@ -551,41 +551,46 @@ def process_uploaded_video(video_file):
             out.release()
 
 class VideoProcessor(VideoProcessorBase):
-    def __init__(self):
-        self.tracker = st.session_state.tracker
-        
+    def __init__(self, tracker) -> None:
+        self.tracker = tracker
+        self._frame_lock = threading.Lock()
+        self.frame_queue = FRAME_QUEUE
+        self.result_queue = RESULT_QUEUE
 
-    def recv(self, frame):
+    def recv(self, frame: av.VideoFrame) -> av.VideoFrame:
         img = frame.to_ndarray(format="bgr24")
         
         try:
             # Process frame
-            detections = self.tracker.detect_persons(img)
-            if len(detections) > 0:
-                detection_list = []
-                for det in detections:
-                    detection_list.append(([det[0], det[1], det[2] - det[0], det[3] - det[1]], det[4], 'person'))
-                
-                tracks = self.tracker.tracker.update_tracks(detection_list, frame=img)
-                
-                for track in tracks:
-                    if not track.is_confirmed():
-                        continue
-                        
-                    track_id = track.track_id
-                    ltwh = track.to_ltwh()
-                    bbox = np.array([
-                        ltwh[0], ltwh[1],
-                        ltwh[0] + ltwh[2], ltwh[1] + ltwh[3]
-                    ])
+            with self._frame_lock:
+                detections = self.tracker.detect_persons(img)
+                if len(detections) > 0:
+                    detection_list = []
+                    for det in detections:
+                        detection_list.append(([det[0], det[1], det[2] - det[0], det[3] - det[1]], det[4], 'person'))
                     
-                    label, confidence = self.tracker.predict_person(img, bbox, track_id)
-                    if label is not None:
-                        self.tracker.draw_detection(img, bbox, track_id, label, confidence)
+                    tracks = self.tracker.tracker.update_tracks(detection_list, frame=img)
+                    
+                    for track in tracks:
+                        if not track.is_confirmed():
+                            continue
+                            
+                        track_id = track.track_id
+                        ltwh = track.to_ltwh()
+                        bbox = np.array([
+                            ltwh[0], ltwh[1],
+                            ltwh[0] + ltwh[2], ltwh[1] + ltwh[3]
+                        ])
+                        
+                        label, confidence = self.tracker.predict_person(img, bbox, track_id)
+                        if label is not None:
+                            self.tracker.draw_detection(img, bbox, track_id, label, confidence)
         
         except Exception as e:
-            st.error(f"Error processing webcam frame: {str(e)}")
-            
+            logger.error(f"Error processing frame: {str(e)}")
+            # Return original frame if processing fails
+            return av.VideoFrame.from_ndarray(img, format="bgr24")
+
         return av.VideoFrame.from_ndarray(img, format="bgr24")
 
 def initialize_webrtc():
