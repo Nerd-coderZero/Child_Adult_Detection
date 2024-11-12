@@ -21,18 +21,6 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-# Initialize `tracker_initialized` if it doesn't exist
-if "tracker_initialized" not in st.session_state:
-    st.session_state["tracker_initialized"] = True
-if 'tracker' not in st.session_state:
-    st.session_state.tracker = None
-if 'processed_video' not in st.session_state:
-    st.session_state.processed_video = None
-
-# Set torch configurations to avoid warnings
-torch.classes.__path__ = []
-
-
 class EnhancedPersonTracker:
     # ... [Keep the existing EnhancedPersonTracker class implementation] ...
     # Note: The original class remains unchanged, just copy it here
@@ -487,6 +475,30 @@ def initialize_model():
             return False
     return True
 
+# Initialize `tracker_initialized` if it doesn't exist
+if "tracker_initialized" not in st.session_state:
+    st.session_state["tracker_initialized"] = False
+
+if 'tracker' not in st.session_state:
+    st.session_state.tracker = None
+if 'processed_video' not in st.session_state:
+    st.session_state.processed_video = None
+
+# Set torch configurations to avoid warnings
+torch.classes.__path__ = []
+
+def setup_tracker():
+    # Only initialize the tracker if it hasn't been done already
+    if not st.session_state["tracker_initialized"]:
+        # Your tracker initialization code here
+        # Example: st.session_state["tracker"] = DeepSort()
+        st.session_state["tracker_initialized"] = True
+        st.write("Tracker has been initialized.")
+    else:
+        st.write("Tracker is already initialized.")
+
+
+
 class VideoProcessor(VideoProcessorBase):
     def __init__(self) -> None:
         super().__init__()
@@ -680,7 +692,7 @@ def process_uploaded_video(video_file):
 
 def main():
     st.title("Person Tracking and Classification App")
-    
+    setup_tracker()
     # Initialize model first
     with st.spinner("Loading model..."):
         if not initialize_model():
