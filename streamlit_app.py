@@ -555,9 +555,7 @@ def process_uploaded_video(video_file):
 class VideoProcessor(VideoProcessorBase):
     def __init__(self):
         self.tracker = st.session_state.tracker
-        self._frame_lock = threading.Lock()
-        self.frame_queue = FRAME_QUEUE
-        self.result_queue = RESULT_QUEUE
+        
 
     def recv(self, frame):
         img = frame.to_ndarray(format="bgr24")
