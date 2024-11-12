@@ -693,7 +693,7 @@ def process_uploaded_video(video_file):
 
 def main():
     st.title("Person Tracking and Classification App")
-    setup_tracker()
+    
     # Initialize model first
     with st.spinner("Loading model..."):
         if not initialize_model():
