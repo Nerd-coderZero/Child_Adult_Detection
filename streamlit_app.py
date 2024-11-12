@@ -62,12 +62,20 @@ class EnhancedPersonTracker:
     def _load_model(self, model_path: str) -> nn.Module:
         """Load classification model with proper error handling"""
         model = models.efficientnet_b0(pretrained=False)
-        model_path = 'best_model.pth'
+        
         model.classifier = nn.Sequential(
             nn.Dropout(p=0.3),
             nn.Linear(1280, 2)
         )
-        
+        try:
+            tracker = EnhancedPersonTracker(
+                model_path='best_model.pth',
+                confidence_threshold=0.6
+            )
+            return tracker
+        except Exception as e:
+            st.error(f"Error loading model: {str(e)}")
+            return None
         try:
             checkpoint = torch.load(model_path, map_location=self.device)
             # Handle different checkpoint formats
