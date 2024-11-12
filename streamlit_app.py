@@ -2,52 +2,34 @@ import streamlit as st
 import cv2
 import torch
 import torch.nn as nn
+from torchvision import models
 import numpy as np
-import os
-import time
-import logging
-import tempfile
-from typing import Tuple, Optional
+from pathlib import Path
 from deep_sort_realtime.deepsort_tracker import DeepSort
+import logging
+from typing import Tuple, List, Dict, Optional
+import tempfile
+from PIL import Image
+import av
+from streamlit_webrtc import webrtc_streamer, WebRtcMode, RTCConfiguration
+import os
+import sys
+
+# Initialize session state
+if 'tracker' not in st.session_state:
+    st.session_state.tracker = None
+if 'processed_video' not in st.session_state:
+    st.session_state.processed_video = None
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Set torch configurations
-torch.classes.__path__ = []
-
-class SharedState:
-    def __init__(self):
-        self.tracker = None
-        self.tracker_initialized = False
-
-shared_state = SharedState()
-
-def initialize_model():
-    """Initialize the tracker if not already initialized"""
-    global shared_state
-    if not shared_state.tracker_initialized:
-        try:
-            shared_state.tracker = EnhancedPersonTracker(
-                model_path='best_model.pth',
-                confidence_threshold=0.6
-            )
-            shared_state.tracker_initialized = True
-            return True
-        except Exception as e:
-            st.error(f"Error initializing model: {str(e)}")
-            return False
-    return True
-
-
-
-
-
-
 class EnhancedPersonTracker:
     # ... [Keep the existing EnhancedPersonTracker class implementation] ...
-    # Note: The original class remains unchanged, just copy it here
+ 
+    # Replace this with your original class implementation
+   
     def __init__(
         self,
         model_path: str = 'best_model.pth',
@@ -91,7 +73,6 @@ class EnhancedPersonTracker:
             self.logger.error(f"Error initializing models: {e}")
             raise
 
-    
     def _load_model(self, model_path: str) -> nn.Module:
         """Load classification model with proper error handling"""
         model = models.efficientnet_b0(pretrained=False)
@@ -119,8 +100,8 @@ class EnhancedPersonTracker:
             
         except Exception as e:
             self.logger.error(f"Error loading model from {model_path}: {e}")
-            
-
+    
+    
 
     def _initialize_tracker(self):
         """Initialize DeepSort tracker with parameters optimized for close interaction"""
@@ -459,79 +440,159 @@ class EnhancedPersonTracker:
         # Draw the label text
         cv2.putText(frame, label_text, (label_x, label_y + label_height - 2), 
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-                          
-def process_uploaded_video(uploaded_file):
-    """Process an uploaded video file for person tracking"""
-    # Temporary file to save the uploaded video
-    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4')
-    temp_file.write(uploaded_file.read())
-    temp_file.close()
-    
-    cap = cv2.VideoCapture(temp_file.name)
-    
-    # Output video settings
-    output_path = "processed_video.mp4"
-    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-    fps = cap.get(cv2.CAP_PROP_FPS)
-    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
-    
+
+def load_model():
+    """Initialize the tracker with proper error handling for Streamlit"""
     try:
-        while cap.isOpened():
+        if st.session_state.tracker is None:
+            st.session_state.tracker = EnhancedPersonTracker(
+                model_path='best_model.pth',
+                confidence_threshold=0.6
+            )
+        return st.session_state.tracker
+    except Exception as e:
+        st.error(f"Error loading model: {str(e)}")
+        return None
+
+def process_uploaded_video(video_file):
+    """Process uploaded video file"""
+    try:
+        # Create temp directory if it doesn't exist
+        temp_dir = tempfile.mkdtemp()
+        input_path = os.path.join(temp_dir, 'input.mp4')
+        output_path = os.path.join(temp_dir, 'output.mp4')
+
+        # Save uploaded file
+        with open(input_path, 'wb') as f:
+            f.write(video_file.read())
+        
+        # Open video
+        cap = cv2.VideoCapture(input_path)
+        if not cap.isOpened():
+            st.error("Error opening video file")
+            return None
+
+        # Get video properties
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        fps = int(cap.get(cv2.CAP_PROP_FPS))
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+
+        # Create video writer
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+
+        # Progress bar
+        progress_text = st.empty()
+        progress_bar = st.progress(0)
+        
+        # Process frames
+        frame_count = 0
+        while True:
             ret, frame = cap.read()
             if not ret:
                 break
 
-            if shared_state.tracker_initialized:
-                try:
-                    detections = shared_state.tracker.detect_persons(frame)
-                    if len(detections) > 0:
-                        detection_list = []
-                        for det in detections:
-                            detection_list.append(([det[0], det[1], det[2] - det[0], det[3] - det[1]], det[4], 'person'))
+            # Process frame
+            detections = st.session_state.tracker.detect_persons(frame)
+            if len(detections) > 0:
+                detection_list = []
+                for det in detections:
+                    detection_list.append(([det[0], det[1], det[2] - det[0], det[3] - det[1]], det[4], 'person'))
+                
+                tracks = st.session_state.tracker.tracker.update_tracks(detection_list, frame=frame)
+                
+                for track in tracks:
+                    if not track.is_confirmed():
+                        continue
                         
-                        tracks = shared_state.tracker.tracker.update_tracks(detection_list, frame=frame)
-                        
-                        for track in tracks:
-                            if not track.is_confirmed():
-                                continue
-                            track_id = track.track_id
-                            ltwh = track.to_ltwh()
-                            bbox = np.array([
-                                ltwh[0], ltwh[1],
-                                ltwh[0] + ltwh[2], ltwh[1] + ltwh[3]
-                            ])
-                            label, confidence = shared_state.tracker.predict_person(frame, bbox, track_id)
-                            if label is not None:
-                                shared_state.tracker.draw_detection(frame, bbox, track_id, label, confidence)
-                except Exception as e:
-                    logger.error(f"Error processing frame: {str(e)}")
+                    track_id = track.track_id
+                    ltwh = track.to_ltwh()
+                    bbox = np.array([
+                        ltwh[0], ltwh[1],
+                        ltwh[0] + ltwh[2], ltwh[1] + ltwh[3]
+                    ])
+                    
+                    label, confidence = st.session_state.tracker.predict_person(frame, bbox, track_id)
+                    if label is not None:
+                        st.session_state.tracker.draw_detection(frame, bbox, track_id, label, confidence)
 
             out.write(frame)
-    except Exception as e:
-        logger.error(f"Error during video processing: {str(e)}")
-    finally:
+            frame_count += 1
+            progress = frame_count / total_frames
+            progress_bar.progress(progress)
+            progress_text.text(f"Processing frame {frame_count}/{total_frames}")
+
+        # Clean up
         cap.release()
         out.release()
-        os.remove(temp_file.name)
+        
+        return output_path
 
-    return output_path
+    except Exception as e:
+        st.error(f"Error processing video: {str(e)}")
+        return None
+    finally:
+        # Clean up temp files
+        if 'cap' in locals():
+            cap.release()
+        if 'out' in locals():
+            out.release()
+
+class VideoProcessor:
+    def __init__(self):
+        self.tracker = st.session_state.tracker
+
+    def recv(self, frame):
+        img = frame.to_ndarray(format="bgr24")
+        
+        try:
+            # Process frame
+            detections = self.tracker.detect_persons(img)
+            if len(detections) > 0:
+                detection_list = []
+                for det in detections:
+                    detection_list.append(([det[0], det[1], det[2] - det[0], det[3] - det[1]], det[4], 'person'))
+                
+                tracks = self.tracker.tracker.update_tracks(detection_list, frame=img)
+                
+                for track in tracks:
+                    if not track.is_confirmed():
+                        continue
+                        
+                    track_id = track.track_id
+                    ltwh = track.to_ltwh()
+                    bbox = np.array([
+                        ltwh[0], ltwh[1],
+                        ltwh[0] + ltwh[2], ltwh[1] + ltwh[3]
+                    ])
+                    
+                    label, confidence = self.tracker.predict_person(img, bbox, track_id)
+                    if label is not None:
+                        self.tracker.draw_detection(img, bbox, track_id, label, confidence)
+        
+        except Exception as e:
+            st.error(f"Error processing webcam frame: {str(e)}")
+            
+        return av.VideoFrame.from_ndarray(img, format="bgr24")
 
 def main():
     st.title("Person Tracking and Classification App")
-
-    # Initialize session state for processed video
-    if 'processed_video' not in st.session_state:
-        st.session_state.processed_video = None
+    
+    # Initialize model first
+    with st.spinner("Loading model..."):
+        tracker = load_model()
+        if tracker is None:
+            st.error("Failed to initialize the model. Please check if model file exists.")
+            return
 
     # Sidebar for app options
     st.sidebar.title("Settings")
     input_option = st.sidebar.radio(
         "Choose Input Source",
-        ["Upload Video"]
+        ["Upload Video", "Use Webcam"]
     )
-
+    
     if input_option == "Upload Video":
         # File uploader
         uploaded_file = st.file_uploader("Choose a video file", type=['mp4', 'avi', 'mov'])
@@ -558,13 +619,19 @@ def main():
                             file_name="processed_video.mp4",
                             mime="video/mp4"
                         )
+    
+    else:  # Webcam option
+        st.write("Webcam Feed")
+        
+        webrtc_ctx = webrtc_streamer(
+            key="person-tracking",
+            mode=WebRtcMode.SENDRECV,
+            rtc_configuration=RTCConfiguration(
+                {"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]}
+            ),
+            video_processor_factory=VideoProcessor,
+            async_processing=True,
+        )
 
 if __name__ == "__main__":
     main()
-
-
-
-
-
-
-
