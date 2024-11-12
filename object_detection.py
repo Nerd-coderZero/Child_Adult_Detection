@@ -8,6 +8,7 @@ from deep_sort_realtime.deepsort_tracker import DeepSort
 import logging
 from typing import Tuple, List, Dict, Optional
 import os
+import io
 
 class EnhancedPersonTracker:
     def __init__(
