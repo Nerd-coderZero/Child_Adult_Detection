@@ -11,7 +11,7 @@ from typing import Tuple, List, Dict, Optional
 import tempfile
 from PIL import Image
 import av
-from streamlit_webrtc import webrtc_streamer, WebRtcMode, RTCConfiguration
+from streamlit_webrtc import webrtc_streamer, WebRtcMode, RTCConfiguration, VideoProcessorBase
 import os
 import sys
 
