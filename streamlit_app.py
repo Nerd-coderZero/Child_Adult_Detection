@@ -305,81 +305,92 @@ class EnhancedPersonTracker:
             self.logger.error(f"Error in classification: {e}")
             return None, 0
 
-    def initialize_tracker():
-        """Initialize the tracker with proper error handling for Streamlit"""
-        try:
-            tracker = EnhancedPersonTracker(
-                model_path='best_model.pth',
-                confidence_threshold=0.6
-            )
-            return tracker
-        except Exception as e:
-            st.error(f"Error loading model: {str(e)}")
-            return None
-    
-    def process_uploaded_video(tracker, video_file):
-        """Process uploaded video file"""
-        # Save uploaded file to temporary location
-        tfile = tempfile.NamedTemporaryFile(delete=False) 
-        tfile.write(video_file.read())
-        
-        # Process video
-        cap = cv2.VideoCapture(tfile.name)
+    def process_video(self, video_path: str, output_path: Optional[str] = None,
+                     show_display: bool = True):
+        """Process video with tracking and classification"""
+        cap = cv2.VideoCapture(video_path)
         if not cap.isOpened():
-            st.error("Error opening video file")
+            self.logger.error(f"Could not open video file {video_path}")
             return
-    
-        # Get video properties
-        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+        frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         fps = int(cap.get(cv2.CAP_PROP_FPS))
         
-        # Create output video writer
-        output_file = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4')
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-        out = cv2.VideoWriter(output_file.name, fourcc, fps, (width, height))
-        
-        # Progress bar
-        progress_bar = st.progress(0)
-        frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        
-        # Process frames
-        for i in range(frame_count):
-            ret, frame = cap.read()
-            if not ret:
-                break
+        if output_path:
+            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+            out = cv2.VideoWriter(output_path, fourcc, fps, (frame_width, frame_height))
+
+        try:
+            while cap.isOpened():
+                ret, frame = cap.read()
+                if not ret:
+                    break
+
+                # Get detections
+                detections = self.detect_persons(frame)
+                tracks = []  # Initialize empty tracks list
                 
-            # Get detections and process frame
-            detections = tracker.detect_persons(frame)
-            if len(detections) > 0:
-                detection_list = []
-                for det in detections:
-                    detection_list.append(([det[0], det[1], det[2] - det[0], det[3] - det[1]], det[4], 'person'))
-                
-                tracks = tracker.tracker.update_tracks(detection_list, frame=frame)
-                
-                for track in tracks:
-                    if not track.is_confirmed():
-                        continue
-                        
-                    track_id = track.track_id
-                    ltwh = track.to_ltwh()
-                    bbox = np.array([
-                        ltwh[0], ltwh[1],
-                        ltwh[0] + ltwh[2], ltwh[1] + ltwh[3]
-                    ])
+                # Update tracks
+                if len(detections) > 0:
+                    # Convert detections to format expected by DeepSort
+                    detection_list = []
+                    for det in detections:
+                        detection_list.append(([det[0], det[1], det[2] - det[0], det[3] - det[1]], det[4], 'person'))
                     
-                    label, confidence = tracker.predict_person(frame, bbox, track_id)
-                    if label is not None:
-                        tracker.draw_detection(frame, bbox, track_id, label, confidence)
-            
-            out.write(frame)
-            progress_bar.progress((i + 1) / frame_count)
-        
-        cap.release()
-        out.release()
-        
-        return output_file.name
+                    # Get updated tracks
+                    tracks = self.tracker.update_tracks(detection_list, frame=frame)
+
+                    # Process each track
+                    for track in tracks:
+                        if not track.is_confirmed():
+                            continue
+
+                        track_id = track.track_id
+                        ltwh = track.to_ltwh()
+                        bbox = np.array([
+                            ltwh[0], ltwh[1],
+                            ltwh[0] + ltwh[2], ltwh[1] + ltwh[3]
+                        ])
+                        
+                        # Check for overlap with other tracks
+                        overlap_detected = False
+                        for other_track in tracks:
+                            if other_track.track_id != track_id:
+                                other_bbox = other_track.to_ltwh()
+                                iou = self._calculate_iou(
+                                    bbox, 
+                                    np.array([other_bbox[0], other_bbox[1], 
+                                            other_bbox[0] + other_bbox[2], 
+                                            other_bbox[1] + other_bbox[3]])
+                                )
+                                if iou > 0.3:  # Significant overlap threshold
+                                    overlap_detected = True
+                                    break
+                        
+                        if not overlap_detected:
+                            # Only classify if no significant overlap
+                            label, confidence = self.predict_person(frame, bbox, track_id)
+                            if label is not None:
+                                self.draw_detection(frame, bbox, track_id, label, confidence)
+
+                if show_display:
+                    cv2.imshow('Tracking', frame)
+                    if cv2.waitKey(1) & 0xFF == ord('q'):
+                        break
+
+                if output_path:
+                    out.write(frame)
+
+        except Exception as e:
+            self.logger.error(f"Error processing video: {e}")
+            raise
+        finally:
+            cap.release()
+            if output_path:
+                out.release()
+            if show_display:
+                cv2.destroyAllWindows()
 
     def _calculate_iou(self, bbox1: np.ndarray, bbox2: np.ndarray) -> float:
         """Calculate IoU between two bounding boxes"""
@@ -426,6 +437,84 @@ class EnhancedPersonTracker:
         # Draw the label text
         cv2.putText(frame, label_text, (label_x, label_y + label_height - 2), 
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+
+
+def load_model():
+    """Initialize the tracker with proper error handling for Streamlit"""
+    try:
+        tracker = EnhancedPersonTracker(
+            model_path='best_model.pth',
+            confidence_threshold=0.6
+        )
+        return tracker
+    except Exception as e:
+        st.error(f"Error loading model: {str(e)}")
+        return None
+
+def process_uploaded_video(tracker, video_file):
+    """Process uploaded video file"""
+    # Save uploaded file to temporary location
+    tfile = tempfile.NamedTemporaryFile(delete=False) 
+    tfile.write(video_file.read())
+    
+    # Process video
+    cap = cv2.VideoCapture(tfile.name)
+    if not cap.isOpened():
+        st.error("Error opening video file")
+        return
+
+    # Get video properties
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    fps = int(cap.get(cv2.CAP_PROP_FPS))
+    
+    # Create output video writer
+    output_file = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4')
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    out = cv2.VideoWriter(output_file.name, fourcc, fps, (width, height))
+    
+    # Progress bar
+    progress_bar = st.progress(0)
+    frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    
+    # Process frames
+    processed_frames = []
+    for i in range(frame_count):
+        ret, frame = cap.read()
+        if not ret:
+            break
+            
+        # Get detections and process frame
+        detections = tracker.detect_persons(frame)
+        if len(detections) > 0:
+            detection_list = []
+            for det in detections:
+                detection_list.append(([det[0], det[1], det[2] - det[0], det[3] - det[1]], det[4], 'person'))
+            
+            tracks = tracker.tracker.update_tracks(detection_list, frame=frame)
+            
+            for track in tracks:
+                if not track.is_confirmed():
+                    continue
+                    
+                track_id = track.track_id
+                ltwh = track.to_ltwh()
+                bbox = np.array([
+                    ltwh[0], ltwh[1],
+                    ltwh[0] + ltwh[2], ltwh[1] + ltwh[3]
+                ])
+                
+                label, confidence = tracker.predict_person(frame, bbox, track_id)
+                if label is not None:
+                    tracker.draw_detection(frame, bbox, track_id, label, confidence)
+        
+        out.write(frame)
+        progress_bar.progress((i + 1) / frame_count)
+    
+    cap.release()
+    out.release()
+    
+    return output_file.name
 
 class VideoProcessor:
     def __init__(self, tracker):
