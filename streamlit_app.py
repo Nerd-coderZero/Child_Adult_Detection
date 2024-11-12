@@ -102,35 +102,7 @@ def process_webcam():
     finally:
         cap.release()
 
-def setup_webcam_page():
-    """Setup webcam page with direct OpenCV capture"""
-    st.write("Webcam Feed")
-    
-    # Add status indicator
-    status_placeholder = st.empty()
-    status_placeholder.info("Initializing webcam...")
-    
-    try:
-        # Initialize model
-        if not initialize_model():
-            status_placeholder.error("Failed to initialize model")
-            return
-            
-        # Reset stop flag
-        shared_state.stop_webcam = False
-        
-        # Add stop button
-        if st.button("Stop Webcam"):
-            shared_state.stop_webcam = True
-            status_placeholder.warning("Stopping webcam...")
-            return
-            
-        # Start webcam processing
-        process_webcam()
-        
-    except Exception as e:
-        logger.error(f"Error in webcam setup: {str(e)}")
-        status_placeholder.error(f"Error setting up webcam: {str(e)}")
+
 
 
 class EnhancedPersonTracker:
@@ -548,6 +520,97 @@ class EnhancedPersonTracker:
         cv2.putText(frame, label_text, (label_x, label_y + label_height - 2), 
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
                           
+def setup_webcam_page():
+    """Setup webcam page with improved camera handling"""
+    st.title("Person Tracking with Webcam")
+    
+    # Initialize model first
+    if not initialize_model():
+        st.error("Failed to initialize model")
+        return
+        
+    # Create placeholders
+    status_placeholder = st.empty()
+    frame_placeholder = st.empty()
+    
+    # Camera control button
+    if 'camera_running' not in st.session_state:
+        st.session_state.camera_running = False
+        
+    if st.button('Start/Stop Camera'):
+        st.session_state.camera_running = not st.session_state.camera_running
+        
+    if st.session_state.camera_running:
+        status_placeholder.info("Starting camera...")
+        try:
+            # Try multiple camera indices
+            cap = None
+            for idx in range(2):  # Try indices 0 and 1
+                cap = cv2.VideoCapture(idx)
+                if cap.isOpened():
+                    break
+                    
+            if not cap or not cap.isOpened():
+                status_placeholder.error("Failed to open webcam. Please check your camera connection.")
+                return
+                
+            status_placeholder.success("Camera initialized successfully!")
+            
+            try:
+                while st.session_state.camera_running:
+                    ret, frame = cap.read()
+                    if not ret:
+                        status_placeholder.error("Failed to get frame from webcam")
+                        break
+                        
+                    # Process frame using your existing tracker
+                    if shared_state.tracker_initialized:
+                        try:
+                            detections = shared_state.tracker.detect_persons(frame)
+                            if len(detections) > 0:
+                                detection_list = []
+                                for det in detections:
+                                    detection_list.append(([det[0], det[1], det[2] - det[0], det[3] - det[1]], det[4], 'person'))
+                                
+                                tracks = shared_state.tracker.tracker.update_tracks(detection_list, frame=frame)
+                                
+                                for track in tracks:
+                                    if not track.is_confirmed():
+                                        continue
+                                        
+                                    track_id = track.track_id
+                                    ltwh = track.to_ltwh()
+                                    bbox = np.array([
+                                        ltwh[0], ltwh[1],
+                                        ltwh[0] + ltwh[2], ltwh[1] + ltwh[3]
+                                    ])
+                                    
+                                    label, confidence = shared_state.tracker.predict_person(frame, bbox, track_id)
+                                    if label is not None:
+                                        shared_state.tracker.draw_detection(frame, bbox, track_id, label, confidence)
+                        except Exception as e:
+                            logger.error(f"Error processing frame: {str(e)}")
+                    
+                    # Convert BGR to RGB for display
+                    frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                    
+                    # Display the frame
+                    frame_placeholder.image(frame, channels="RGB")
+                    
+                    # Control frame rate
+                    time.sleep(0.03)  # ~30 FPS
+                    
+            except Exception as e:
+                status_placeholder.error(f"Error during video processing: {str(e)}")
+                
+            finally:
+                cap.release()
+                
+        except Exception as e:
+            status_placeholder.error(f"Error initializing camera: {str(e)}")
+    else:
+        status_placeholder.info("Camera stopped")
+
 def main():
     st.title("Person Tracking and Classification App")
     
@@ -555,12 +618,6 @@ def main():
     if 'processed_video' not in st.session_state:
         st.session_state.processed_video = None
     
-    # Initialize model first
-    with st.spinner("Loading model..."):
-        if not initialize_model():
-            st.error("Failed to initialize the model. Please check if model file exists.")
-            return
-
     # Sidebar for app options
     st.sidebar.title("Settings")
     input_option = st.sidebar.radio(
