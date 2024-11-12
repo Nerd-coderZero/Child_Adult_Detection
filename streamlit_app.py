@@ -7,6 +7,7 @@ import numpy as np
 import tempfile
 import os
 import threading
+from deep_sort_realtime.deepsort_tracker import DeepSort
 import time
 from pathlib import Path
 import logging
