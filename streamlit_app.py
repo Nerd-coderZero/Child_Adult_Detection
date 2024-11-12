@@ -305,6 +305,18 @@ class EnhancedPersonTracker:
             self.logger.error(f"Error in classification: {e}")
             return None, 0
 
+    def initialize_tracker():
+        """Initialize the tracker with proper error handling for Streamlit"""
+        try:
+            tracker = EnhancedPersonTracker(
+                model_path='best_model.pth',
+                confidence_threshold=0.6
+            )
+            return tracker
+        except Exception as e:
+            st.error(f"Error loading model: {str(e)}")
+            return None
+    
     def process_uploaded_video(tracker, video_file):
         """Process uploaded video file"""
         # Save uploaded file to temporary location
@@ -332,7 +344,6 @@ class EnhancedPersonTracker:
         frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         
         # Process frames
-        processed_frames = []
         for i in range(frame_count):
             ret, frame = cap.read()
             if not ret:
