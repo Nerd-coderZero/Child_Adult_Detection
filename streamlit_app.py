@@ -29,12 +29,13 @@ class EnhancedPersonTracker:
     def __init__(
             self,
             model_path: str = 'best_model.pth',
-            confidence_threshold: float = 0.6,
-            input_size: tuple = (416, 416),  # Added parameter
-            close_up_min_pixels: int = 40,
-            close_up_max_pixels: int = 300,
-            close_up_aspect_ratio_bounds: Tuple[float, float] = (0.5, 2.0),
-            boundary_margin_ratio: float = 0.1
+            confidence_threshold: float = 0.75,  # Increased confidence threshold
+            input_size: tuple = (416, 416),
+            close_up_min_pixels: int = 60,  # Increased minimum size
+            close_up_max_pixels: int = 250,  # Reduced maximum size
+            close_up_aspect_ratio_bounds: Tuple[float, float] = (0.4, 1.8),  # Tightened bounds
+            boundary_margin_ratio: float = 0.15,  # Increased margin
+            buffer_size: int = 5  # Added frame buffer size
         ):
             # Setup logging and device
             logging.basicConfig(level=logging.INFO)
@@ -47,11 +48,22 @@ class EnhancedPersonTracker:
 
             # Core parameters - adjusted for better detection
             self.detection_params = {
-                'max_size_ratio': 0.90,  # Increased to handle close objects
-                'min_pixels': 60,  # Increased minimum size to reduce false positives
-                'aspect_ratio_bounds': (0.4, 2.5),  # Tightened aspect ratio bounds
-                'padding_ratio': 0.08,  # Reduced padding to prevent overlap
-                'temporal_smoothing': 5  # Frames for temporal smoothing
+                'max_size_ratio': 0.80,  # Reduced to avoid large false detections
+                'min_pixels': 80,  # Increased minimum size
+                'aspect_ratio_bounds': (0.3, 2.0),  # Tightened aspect ratio bounds
+                'padding_ratio': 0.05,  # Reduced padding
+                'temporal_smoothing': 7,  # Increased temporal smoothing
+                'min_detection_confidence': 0.6,  # Minimum detection confidence
+                'track_stability_threshold': 5  # Minimum frames for stable track
+            }
+
+            # Enhanced tracking parameters
+            self.tracking_params = {
+                'velocity_persistence': 0.7,  # How much to consider previous velocity
+                'position_smoothing': 0.8,  # Position smoothing factor
+                'min_hits': 3,  # Minimum hits before establishing track
+                'max_age': 20,  # Maximum frames to keep lost tracks
+                'min_iou': 0.3  # Minimum IOU for track association
             }
 
             # Additional parameters for close-up handling
