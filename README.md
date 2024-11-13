@@ -26,9 +26,11 @@ pip install -r requirements.txt
 3. Download and set up models:
 
 Object Detection Model: Place the TensorFlow object detection model in the appropriate directory (ssd_mobilenet_v2_fpnlite_320x320_coco17_tpu-8/saved_model).
-Child/Adult Classification Model: Ensure the child_adult_model.h5 file is available in the project root directory.
-Usage
-Run the script with the sample video:
+Child/Adult Classification Model: Ensure the best_model.pth file is available in the project root directory.
+
+## Usage
+
+Run the script(on cmd/terminal) with the sample videos in same directory(Then chose a no.) :
     
 python object_detection.py 
 
