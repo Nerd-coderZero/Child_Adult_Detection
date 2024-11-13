@@ -57,14 +57,7 @@ class EnhancedPersonTracker:
                 'track_stability_threshold': 5  # Minimum frames for stable track
             }
 
-            # Enhanced tracking parameters
-            self.tracking_params = {
-                'velocity_persistence': 0.7,  # How much to consider previous velocity
-                'position_smoothing': 0.8,  # Position smoothing factor
-                'min_hits': 3,  # Minimum hits before establishing track
-                'max_age': 20,  # Maximum frames to keep lost tracks
-                'min_iou': 0.3  # Minimum IOU for track association
-            }
+            
 
             # Additional parameters for close-up handling
             self.close_up_min_pixels = close_up_min_pixels
