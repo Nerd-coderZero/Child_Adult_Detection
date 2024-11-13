@@ -1,4 +1,4 @@
-# Enhanced Person Tracker for Therapy Sessions
+# Enhanced Person Tracker for Therapist(Adult)/Child Classification
 ## Overview
 This project implements an advanced person detection and tracking system specifically designed for therapy session analysis. Using YOLOv8 for detection, DeepSort for tracking, and a custom EfficientNet-based classification model, the system can identify and track therapists and children in video footage while maintaining consistent IDs throughout the session.
 
