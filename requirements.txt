@@ -12,3 +12,4 @@ streamlit
 Pillow
 av
 streamlit_webrtc
+gdown
