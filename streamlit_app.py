@@ -14,6 +14,8 @@ import av
 from streamlit_webrtc import webrtc_streamer, WebRtcMode, RTCConfiguration
 import os
 import sys
+import gdown
+import subprocess
 
 
 # Initialize session state
@@ -89,19 +91,35 @@ class EnhancedPersonTracker:
                 raise
 
     def _initialize_tracker(self):
-        """Initialize DeepSort tracker with optimized parameters"""
-        self.tracker = DeepSort(
-            max_age=self.tracking_params['max_age'],
-            n_init=self.tracking_params['min_hits'],
-            max_iou_distance=1.0 - self.tracking_params['min_iou'],
-            max_cosine_distance=0.25,  # Stricter appearance matching
-            nn_budget=100,
-            override_track_class=None,
-            embedder=None,
-            half=True,  # Use half precision for faster processing
-            bgr=True,
-            embedder_gpu=True
-        )
+    """Initialize DeepSort tracker with proper embedder"""
+    from deep_sort_realtime.deep_sort import DeepSort
+    from deep_sort_realtime.deep_sort.deep.model import Extractor
+
+    # Initialize embedder
+    model_path = os.path.join(os.path.dirname(__file__), 'deep_sort_weights/ckpt.t7')
+    
+    # Download weights if they don't exist
+    if not os.path.exists(model_path):
+        os.makedirs(os.path.dirname(model_path), exist_ok=True)
+        import gdown
+        url = 'https://drive.google.com/uc?id=1_qIY-yVj5y0iC1kNamXxYFQmHMR_Lwoc'
+        gdown.download(url, model_path, quiet=False)
+
+    self.embedder = Extractor(model_path=model_path,
+                             use_cuda=torch.cuda.is_available())
+
+    self.tracker = DeepSort(
+        max_age=self.tracking_params['max_age'],
+        n_init=self.tracking_params['min_hits'],
+        max_iou_distance=1.0 - self.tracking_params['min_iou'],
+        max_cosine_distance=0.25,
+        nn_budget=100,
+        override_track_class=None,
+        embedder=self.embedder,  # Add the embedder here
+        half=True,
+        bgr=True,
+        embedder_gpu=torch.cuda.is_available()
+    )
 
     def _load_model(self, model_path: str) -> nn.Module:
         """Load classification model with proper error handling"""
