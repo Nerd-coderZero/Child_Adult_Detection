@@ -1,3 +1,4 @@
+streamlit_webrtc
 opencv-contrib-python-headless
 torch
 opencv-python-headless
