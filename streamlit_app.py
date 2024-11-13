@@ -14,17 +14,12 @@ import av
 from streamlit_webrtc import webrtc_streamer, WebRtcMode, RTCConfiguration
 import os
 import sys
-import gdown
-import subprocess
-
 
 # Initialize session state
 if 'tracker' not in st.session_state:
     st.session_state.tracker = None
 if 'processed_video' not in st.session_state:
     st.session_state.processed_video = None
-if 'frame_buffer' not in st.session_state:
-    st.session_state.frame_buffer = []
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -34,13 +29,12 @@ class EnhancedPersonTracker:
     def __init__(
             self,
             model_path: str = 'best_model.pth',
-            confidence_threshold: float = 0.75,  # Increased confidence threshold
-            input_size: tuple = (416, 416),
-            close_up_min_pixels: int = 60,  # Increased minimum size
-            close_up_max_pixels: int = 250,  # Reduced maximum size
-            close_up_aspect_ratio_bounds: Tuple[float, float] = (0.4, 1.8),  # Tightened bounds
-            boundary_margin_ratio: float = 0.15,  # Increased margin
-            buffer_size: int = 5  # Added frame buffer size
+            confidence_threshold: float = 0.6,
+            input_size: tuple = (416, 416),  # Added parameter
+            close_up_min_pixels: int = 40,
+            close_up_max_pixels: int = 300,
+            close_up_aspect_ratio_bounds: Tuple[float, float] = (0.5, 2.0),
+            boundary_margin_ratio: float = 0.1
         ):
             # Setup logging and device
             logging.basicConfig(level=logging.INFO)
@@ -48,80 +42,36 @@ class EnhancedPersonTracker:
             self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
             self.logger.info(f"Using device: {self.device}")
 
+            # Store input size for use in other methods
             self.input_size = input_size
-            self.buffer_size = buffer_size
-            self.frame_buffer = []
 
-            # Optimized parameters for false positive reduction
+            # Core parameters - adjusted for better detection
             self.detection_params = {
-                'max_size_ratio': 0.80,  # Reduced to avoid large false detections
-                'min_pixels': 80,  # Increased minimum size
-                'aspect_ratio_bounds': (0.3, 2.0),  # Tightened aspect ratio bounds
-                'padding_ratio': 0.05,  # Reduced padding
-                'temporal_smoothing': 7,  # Increased temporal smoothing
-                'min_detection_confidence': 0.6,  # Minimum detection confidence
-                'track_stability_threshold': 5  # Minimum frames for stable track
+                'max_size_ratio': 0.90,  # Increased to handle close objects
+                'min_pixels': 60,  # Increased minimum size to reduce false positives
+                'aspect_ratio_bounds': (0.4, 2.5),  # Tightened aspect ratio bounds
+                'padding_ratio': 0.08,  # Reduced padding to prevent overlap
+                'temporal_smoothing': 5  # Frames for temporal smoothing
             }
 
-            # Enhanced tracking parameters
-            self.tracking_params = {
-                'velocity_persistence': 0.7,  # How much to consider previous velocity
-                'position_smoothing': 0.8,  # Position smoothing factor
-                'min_hits': 3,  # Minimum hits before establishing track
-                'max_age': 20,  # Maximum frames to keep lost tracks
-                'min_iou': 0.3  # Minimum IOU for track association
-            }
-
+            # Additional parameters for close-up handling
             self.close_up_min_pixels = close_up_min_pixels
             self.close_up_max_pixels = close_up_max_pixels
             self.close_up_aspect_ratio_bounds = close_up_aspect_ratio_bounds
             self.confidence_threshold = confidence_threshold
             self.boundary_margin_ratio = boundary_margin_ratio
 
-            # Enhanced classification history with confidence weighting
+            # Initialize classification history
             self.classification_history = {}
-            self.track_stability = {}
 
+            # Initialize models and tracker
             try:
                 self.classification_model = self._load_model(model_path)
-                self.detector = self._load_detector()
+                self.detector = self._load_detector()  # This will use input_size
                 self._initialize_tracker()
             except Exception as e:
                 self.logger.error(f"Error initializing models: {e}")
                 raise
-
-    def _initialize_tracker(self):
-        """Initialize DeepSort tracker with proper embedder"""
-        try:
-            # Import the correct DeepSort class
-            from deep_sort_realtime.deepsort_tracker import DeepSort
-            
-            # Initialize embedder
-            model_path = os.path.join(os.path.dirname(__file__), 'deep_sort_weights/ckpt.t7')
-            
-            # Download weights if they don't exist
-            if not os.path.exists(model_path):
-                os.makedirs(os.path.dirname(model_path), exist_ok=True)
-                import gdown
-                url = 'https://drive.google.com/uc?id=1_qIY-yVj5y0iC1kNamXxYFQmHMR_Lwoc'
-                gdown.download(url, model_path, quiet=False)
-            
-            # Initialize the tracker with correct parameters
-            self.tracker = DeepSort(
-                max_age=self.tracking_params['max_age'],
-                n_init=self.tracking_params['min_hits'],
-                max_iou_distance=1.0 - self.tracking_params['min_iou'],
-                max_cosine_distance=0.3,
-                nn_budget=100,
-                embedder_gpu=torch.cuda.is_available(),
-                embedder_model_name="mobilenet",
-                embedder_wts=model_path,
-                polygon=False,
-                today=None
-            )
-        except Exception as e:
-            self.logger.error(f"Error initializing tracker: {e}")
-            raise
 
     def _load_model(self, model_path: str) -> nn.Module:
         """Load classification model with proper error handling"""
@@ -151,34 +101,18 @@ class EnhancedPersonTracker:
         except Exception as e:
             self.logger.error(f"Error loading model from {model_path}: {e}")
 
-    def _update_track_stability(self, track_id: int, detection_confidence: float):
-        """Update track stability metrics"""
-        if track_id not in self.track_stability:
-            self.track_stability[track_id] = {
-                'consecutive_detections': 0,
-                'total_detections': 0,
-                'average_confidence': 0
-            }
 
-        stability = self.track_stability[track_id]
-        stability['consecutive_detections'] += 1
-        stability['total_detections'] += 1
-        stability['average_confidence'] = (
-            stability['average_confidence'] * (stability['total_detections'] - 1) +
-            detection_confidence
-        ) / stability['total_detections']
 
-    def _is_track_stable(self, track_id: int) -> bool:
-        """Check if a track is stable enough for classification"""
-        if track_id not in self.track_stability:
-            return False
-
-        stability = self.track_stability[track_id]
-        return (
-            stability['consecutive_detections'] >= self.detection_params['track_stability_threshold'] and
-            stability['average_confidence'] >= self.detection_params['min_detection_confidence']
+    def _initialize_tracker(self):
+        """Initialize DeepSort tracker with parameters optimized for close interaction"""
+        self.tracker = DeepSort(
+            max_age=30,            # Reduced to prevent tracking ghost objects
+            n_init=3,              # Increased to ensure more stable initialization
+            max_iou_distance=0.6,  # Reduced for better discrimination
+            max_cosine_distance=0.3,  # Reduced for more strict appearance matching
+            nn_budget=100
         )
-        
+
     def _preprocess_frame(self, frame: np.ndarray) -> np.ndarray:
         """Preprocess frame for better detection with fixed color space conversion"""
         try:
@@ -284,51 +218,6 @@ class EnhancedPersonTracker:
 
         return True
 
-    def _get_consistent_detections(self, frame: np.ndarray) -> np.ndarray:
-        """Get detections with temporal consistency check"""
-        current_detections = self.detect_persons(frame)
-        
-        if len(self.frame_buffer) < 2:
-            return current_detections
-
-        # Compare with previous frame detections
-        prev_detections = self.detect_persons(self.frame_buffer[-2])
-        
-        consistent_detections = []
-        for det in current_detections:
-            # Check if detection has corresponding detection in previous frame
-            if self._has_matching_detection(det, prev_detections):
-                consistent_detections.append(det)
-
-        return np.array(consistent_detections)
-
-    def _has_matching_detection(self, detection: np.ndarray, prev_detections: np.ndarray,
-                              iou_threshold: float = 0.3) -> bool:
-        """Check if detection has a match in previous frame"""
-        if len(prev_detections) == 0:
-            return False
-
-        # Calculate IoU with all previous detections
-        ious = np.array([self._calculate_iou(detection[:4], prev_det[:4]) 
-                        for prev_det in prev_detections])
-        
-        return np.any(ious > iou_threshold)
-
-    def _has_significant_overlap(self, bbox: np.ndarray, tracks: List, track_id: int,
-                               overlap_threshold: float = 0.3) -> bool:
-        """Check for significant overlap with other tracks"""
-        for other_track in tracks:
-            if other_track.track_id != track_id and other_track.is_confirmed():
-                other_ltwh = other_track.to_ltwh()
-                other_bbox = np.array([
-                    other_ltwh[0], other_ltwh[1],
-                    other_ltwh[0] + other_ltwh[2], other_ltwh[1] + other_ltwh[3]
-                ])
-                
-                if self._calculate_iou(bbox, other_bbox) > overlap_threshold:
-                    return True
-        return False
-                                   
     def _smooth_classification(self, track_id: int, label: str, confidence: float) -> Tuple[str, float]:
         """Apply temporal smoothing to classifications"""
         history = self.classification_history.get(track_id, [])
@@ -435,7 +324,7 @@ class EnhancedPersonTracker:
 
     def process_video(self, video_path: str, output_path: Optional[str] = None,
                      show_display: bool = True):
-        """Process video with enhanced tracking and stability checks"""
+        """Process video with tracking and classification"""
         cap = cv2.VideoCapture(video_path)
         if not cap.isOpened():
             self.logger.error(f"Could not open video file {video_path}")
@@ -455,23 +344,21 @@ class EnhancedPersonTracker:
                 if not ret:
                     break
 
-                # Update frame buffer for temporal consistency
-                self.frame_buffer.append(frame.copy())
-                if len(self.frame_buffer) > self.buffer_size:
-                    self.frame_buffer.pop(0)
+                # Get detections
+                detections = self.detect_persons(frame)
+                tracks = []  # Initialize empty tracks list
 
-                # Get detections with temporal consistency check
-                detections = self._get_consistent_detections(frame)
-                
+                # Update tracks
                 if len(detections) > 0:
-                    # Convert detections to DeepSort format
+                    # Convert detections to format expected by DeepSort
                     detection_list = []
                     for det in detections:
                         detection_list.append(([det[0], det[1], det[2] - det[0], det[3] - det[1]], det[4], 'person'))
 
-                    # Update tracks with enhanced stability checking
+                    # Get updated tracks
                     tracks = self.tracker.update_tracks(detection_list, frame=frame)
 
+                    # Process each track
                     for track in tracks:
                         if not track.is_confirmed():
                             continue
@@ -483,16 +370,26 @@ class EnhancedPersonTracker:
                             ltwh[0] + ltwh[2], ltwh[1] + ltwh[3]
                         ])
 
-                        # Update track stability
-                        self._update_track_stability(track_id, track.get_det_conf())
+                        # Check for overlap with other tracks
+                        overlap_detected = False
+                        for other_track in tracks:
+                            if other_track.track_id != track_id:
+                                other_bbox = other_track.to_ltwh()
+                                iou = self._calculate_iou(
+                                    bbox, 
+                                    np.array([other_bbox[0], other_bbox[1], 
+                                            other_bbox[0] + other_bbox[2], 
+                                            other_bbox[1] + other_bbox[3]])
+                                )
+                                if iou > 0.3:  # Significant overlap threshold
+                                    overlap_detected = True
+                                    break
 
-                        # Only process stable tracks
-                        if self._is_track_stable(track_id):
-                            # Check for significant overlap with other tracks
-                            if not self._has_significant_overlap(bbox, tracks, track_id):
-                                label, confidence = self.predict_person(frame, bbox, track_id)
-                                if label is not None:
-                                    self.draw_detection(frame, bbox, track_id, label, confidence)
+                        if not overlap_detected:
+                            # Only classify if no significant overlap
+                            label, confidence = self.predict_person(frame, bbox, track_id)
+                            if label is not None:
+                                self.draw_detection(frame, bbox, track_id, label, confidence)
 
                 if show_display:
                     cv2.imshow('Tracking', frame)
