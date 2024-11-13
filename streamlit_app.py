@@ -91,7 +91,22 @@ class EnhancedPersonTracker:
                 raise
 
     def _initialize_tracker(self):
-        """Initialize DeepSort tracker with parameters optimized for close interaction"""
+        """Initialize DeepSort tracker with proper embedder"""
+        from deep_sort_realtime.deep_sort import DeepSort
+        from deep_sort_realtime.deep_sort.deep.model import Extractor
+    
+        # Initialize embedder
+        model_path = os.path.join(os.path.dirname(__file__), 'deep_sort_weights/ckpt.t7')
+        
+        # Download weights if they don't exist
+        if not os.path.exists(model_path):
+            os.makedirs(os.path.dirname(model_path), exist_ok=True)
+            import gdown
+            url = 'https://drive.google.com/uc?id=1_qIY-yVj5y0iC1kNamXxYFQmHMR_Lwoc'
+            gdown.download(url, model_path, quiet=False)
+    
+        self.embedder = Extractor(model_path=model_path,
+                                 use_cuda=torch.cuda.is_available())
     
         self.tracker = DeepSort(
             max_age=self.tracking_params['max_age'],
